@@ -504,6 +504,12 @@ const ROOM_MARGIN: i32 = 5;
 
 impl World {
     /// Interior maps pack many rooms (linked by warps) into one map.
+    /// Height (y-up) of what actors stand on at a world point: the GAT surface, which
+    /// includes stairs, bridges and platforms above the drawn ground, else the ground.
+    fn floor_at(&self, x: f32, z: f32) -> f32 {
+        self.gat.as_ref().and_then(|g| g.height_at(x / ro_render::CELL, z / ro_render::CELL)).map_or_else(|| self.ground.height_at(x, z), |h| -h)
+    }
+
     fn indoor(&self) -> bool {
         !self.outdoors && self.name.contains("_in")
     }
@@ -914,13 +920,7 @@ impl Mob {
         self.smooth = Some((fx, fy));
         let walking = self.walker.is_walking();
         let (x, z) = ((fx + 0.5) * ro_render::CELL, (fy + 0.5) * ro_render::CELL);
-        // Stand on the GAT surface: it includes stairs, bridges and other walkable models
-        // that sit above the GND ground.
-        let y = world
-            .gat
-            .as_ref()
-            .and_then(|g| g.height_at(fx + 0.5, fy + 0.5))
-            .map_or_else(|| world.ground.height_at(x, z), |h| -h);
+        let y = world.floor_at(x, z);
         self.actor.pos = glam::Vec3::new(x, y, z);
         if let Some((_, left)) = self.pose.as_mut() {
             *left -= dt;
@@ -3008,7 +3008,7 @@ impl App {
                     let (fx, fy) = floor_cell(&f);
                     let (x, z) = (fx * ro_render::CELL, fy * ro_render::CELL);
                     if let Some(w) = self.world.as_ref() {
-                        let pos = glam::Vec3::new(x, w.ground.height_at(x, z), z);
+                        let pos = glam::Vec3::new(x, w.floor_at(x, z), z);
                         self.play_fx_tagged(glow, pos, f.id);
                         self.play_fx_tagged(pillar, pos, f.id);
                         if let (Some(audio), Some(vfs)) = (self.audio.as_ref(), self.vfs.as_ref()) {
@@ -4434,7 +4434,7 @@ impl App {
             .filter_map(|(&id, (f, _))| {
                 let (fx, fy) = floor_cell(f);
                 let (x, z) = (fx * ro_render::CELL, fy * ro_render::CELL);
-                let p = r.project(glam::Vec3::new(x, w.ground.height_at(x, z), z), size)?;
+                let p = r.project(glam::Vec3::new(x, w.floor_at(x, z), z), size)?;
                 let d = (p.x - cx as f32).hypot(p.y - 8.0 - cy as f32);
                 (d < 22.0).then_some((id, d))
             })
@@ -6102,11 +6102,13 @@ impl App {
     fn pick(&self) -> Option<(u16, u16)> {
         let (r, w, (cx, cy)) = (self.renderer.as_ref()?, self.world.as_ref()?, self.cursor?);
         let (origin, dir) = r.ray(cx as f32, cy as f32);
-        // March along the ray until it passes below the ground.
+        // March along the ray until it passes below what actors stand on (`floor_at`), not
+        // the drawn ground: Herosria's platforms stand 30 units over it, so picking the ground
+        // landed clicks cells away.
         let mut t = 0.0;
         while t < 5000.0 {
             let p = origin + dir * t;
-            if p.y <= w.ground.height_at(p.x, p.z) {
+            if p.y <= w.floor_at(p.x, p.z) {
                 let (x, y) = ((p.x / ro_render::CELL).floor(), (p.z / ro_render::CELL).floor());
                 return (x >= 0.0 && y >= 0.0).then_some((x as u16, y as u16));
             }
@@ -7035,7 +7037,7 @@ impl App {
                 }
                 let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
                 let (wx, wz) = (fx * ro_render::CELL, fy * ro_render::CELL);
-                let h = w.gat.as_ref().and_then(|g| g.height_at(fx, fy)).map_or_else(|| w.ground.height_at(wx, wz), |h| -h);
+                let h = w.floor_at(wx, wz);
                 Some(glam::Vec3::new(wx, h, wz))
             })
             .collect();
@@ -7202,7 +7204,7 @@ impl App {
                 if let Some(mut a) = actor.clone() {
                     let (fx, fy) = floor_cell(f);
                     let (x, z) = (fx * ro_render::CELL, fy * ro_render::CELL);
-                    let y = w.gat.as_ref().and_then(|g| g.height_at(fx, fy)).map_or_else(|| w.ground.height_at(x, z), |h| -h);
+                    let y = w.floor_at(x, z);
                     a.pos = glam::Vec3::new(x, y, z);
                     r.actors.push(a);
                 }
@@ -7248,7 +7250,7 @@ impl App {
         if let Some((f, w)) = hovered_item.and_then(|id| self.floor.get(&id)).map(|(f, _)| f).zip(self.world.as_ref()) {
             let (fx, fy) = floor_cell(f);
             let (x, z) = (fx * ro_render::CELL, fy * ro_render::CELL);
-            let y = w.gat.as_ref().and_then(|g| g.height_at(fx, fy)).map_or_else(|| w.ground.height_at(x, z), |h| -h);
+            let y = w.floor_at(x, z);
             if let Some(feet) = r.project(glam::Vec3::new(x, y, z), size) {
                 let name = self.item_db.as_ref().map_or_else(|| format!("Item #{}", f.item), |d| d.name(f.item, f.identified));
                 let amount = f.amount.max(1).to_string();
@@ -8922,6 +8924,6 @@ fn option_alpha(option: u32, me: bool) -> f32 {
 fn cell_pos_in(w: &World, cell: (u16, u16)) -> Option<glam::Vec3> {
     let (fx, fy) = (cell.0 as f32 + 0.5, cell.1 as f32 + 0.5);
     let (x, z) = (fx * ro_render::CELL, fy * ro_render::CELL);
-    let y = w.gat.as_ref().and_then(|g| g.height_at(fx, fy)).map_or_else(|| w.ground.height_at(x, z), |h| -h);
+    let y = w.floor_at(x, z);
     Some(glam::Vec3::new(x, y, z))
 }
