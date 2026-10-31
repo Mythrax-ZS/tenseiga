@@ -195,6 +195,7 @@ const SKILL_SOUNDS: &[(&str, &str)] = &[
     ("SAM_UNCHAINED_WILL", "ef_detoxication"),
     ("SAM_FORGE_OF_TEN_SOULS", "priest_gloria"),
     ("SAM_DESTINYS_SEVERANCE", "ef_magnumbreak"),
+    ("SAM_CRESCENT_GALE", "knight_brandish_spear"),
     ("SM_BASH", "ef_bash"),
     ("SM_MAGNUM", "ef_magnumbreak"),
     ("SM_ENDURE", "ef_endure"),

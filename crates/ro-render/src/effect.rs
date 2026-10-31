@@ -89,6 +89,9 @@ pub enum Shape {
     /// the effect's colour; slashes and souls carry Tenseiga's own. `solid` layers paint
     /// true colour (alpha-blended); the others add a narrower glowing core over them.
     Tenseiga { part: TenseigaPart, solid: bool },
+    /// Crescent Gale: a crescent of mortal flame flying from `pos` along `travel`, then
+    /// breaking up; `solid` as for `Tenseiga`.
+    Crescent { travel: Vec3, solid: bool },
 }
 
 /// The pieces the Mortal Flame skills' effects are built from. Streaks and rings use
@@ -210,7 +213,7 @@ pub enum AuraLayer {
 impl ProcFx {
     /// Drawn alpha-blended (darkening) rather than added.
     pub fn shades(&self) -> bool {
-        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. })
+        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. })
     }
 }
 
@@ -485,6 +488,58 @@ fn tenseiga(part: TenseigaPart, solid: bool, pos: Vec3, t: f32, tint: [f32; 3], 
     }
 }
 
+/// Crescent Gale at progress `t`: the crescent flies the first 70%, two fading afterimages
+/// behind it and a scorched line left on the ground, then swells and breaks up. Crimson, its
+/// leading edge cyan; it faces the camera, its bulge leading along the travel on screen.
+fn crescent(solid: bool, pos: Vec3, travel: Vec3, t: f32, eye: Vec3, ground: Option<&Heights>, out: &mut Vec<Vertex>) {
+    use std::f32::consts::PI;
+    const FLY: f32 = 0.7;
+    let paint = |c: [f32; 3], opacity: f32, k: f32| if solid { rgba(c, 1.0, opacity) } else { rgba(mix(c, [1.0, 0.95, 0.95], 0.55), k, opacity) };
+    let flown = |t: f32| (t / FLY).clamp(0.0, 1.0);
+    let burst = ((t - FLY) / (1.0 - FLY)).clamp(0.0, 1.0);
+    if solid {
+        let side = Vec3::new(-travel.z, 0.0, travel.x).normalize_or_zero() * CELL * 0.6;
+        let head = pos + travel * flown(t);
+        let c = rgba(DEEP_CRIMSON, 1.0, 0.7 * (1.0 - t));
+        let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color: c };
+        drape(out, [v(pos - side, 0.0, 0.0), v(head - side, 1.0, 0.0), v(head + side, 1.0, 1.0), v(pos + side, 0.0, 1.0)], ground, 0.5);
+    }
+    for (k, (lag, strength)) in [(0.0, 1.0), (0.06, 0.45), (0.12, 0.2)].into_iter().enumerate() {
+        let local = t - lag;
+        let alpha = strength * (1.0 - burst) * (local / 0.05).clamp(0.0, 1.0);
+        if alpha <= 0.0 {
+            continue;
+        }
+        let s = flown(local);
+        let centre = pos + travel * s + Vec3::Y * CELL * 1.5;
+        let (right, up) = facing(centre, eye);
+        let (dx, dy) = (travel.dot(right), travel.dot(up));
+        let lead = if dx * dx + dy * dy > 1e-6 { (right * dx + up * dy).normalize() } else { up };
+        let side = right * -lead.dot(up) + up * lead.dot(right);
+        let r = CELL * (2.0 + 0.5 * s + 1.5 * burst) * (1.0 - 0.1 * k as f32);
+        let width = CELL * 0.8 * if solid { 1.0 } else { 0.4 } * (1.0 - 0.5 * burst);
+        let hub = centre - lead * r * 0.55;
+        let span = 75f32.to_radians();
+        const N: usize = 24;
+        // Thick in the middle, sharp at the tips; the glow layer hugs the leading edge.
+        let edge = |i: usize| {
+            let f = i as f32 / N as f32;
+            let a = -span + 2.0 * span * f;
+            let radial = lead * a.cos() + side * a.sin();
+            let outer = hub + radial * r;
+            let inner = outer - radial * width * (PI * f).sin().powf(0.7);
+            (
+                Vertex { pos: inner.into(), uv: [f, 0.0], color: paint(CRIMSON, alpha * 0.9, 1.2) },
+                Vertex { pos: outer.into(), uv: [f, 1.0], color: paint(mix(CRIMSON, CYAN, 0.85), alpha, 1.8) },
+            )
+        };
+        for i in 0..N {
+            let ((i0, o0), (i1, o1)) = (edge(i), edge(i + 1));
+            out.extend([i0, o0, o1, i0, o1, i1]);
+        }
+    }
+}
+
 fn hash(mut x: u32) -> u32 {
     x ^= x >> 16;
     x = x.wrapping_mul(0x7feb_352d);
@@ -514,6 +569,7 @@ impl ProcFx {
         match self.shape {
             Shape::Aura { layer, seed, style } => aura(layer, seed, style, self.pos, self.time_ms, eye, ground, out),
             Shape::Tenseiga { part, solid } => tenseiga(part, solid, self.pos, t, self.color, eye, out),
+            Shape::Crescent { travel, solid } => crescent(solid, self.pos, travel, t, eye, ground, out),
             Shape::Column { radius, height } => {
                 let h = height * CELL * (t / 0.3).min(1.0);
                 let r = radius * CELL;

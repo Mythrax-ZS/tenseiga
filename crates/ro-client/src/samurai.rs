@@ -78,6 +78,7 @@ pub const SKILLS: &[Skill] = &[
     Skill { id: 7012, internal: "SAM_UNCHAINED_WILL", name: "Unchained Will", description: "Mortal Flame / Tenseiga. Balance is not obedience; balance is freedom. Cure Stun, Freeze, Stone, Sleep, Silence, Curse, Blind and Confusion, and ward them off for 40/50/60/70/80 seconds.", icon: "mo_steelbody", slot: 10 },
     Skill { id: 7013, internal: "SAM_FORGE_OF_TEN_SOULS", name: "Forge of Ten Souls", description: "Mortal Flame / Tenseiga. The will of every companion lit the First Forge. For 90 seconds, every party member within 7 cells gains 5/10/15/20/25% ATK and MATK, and 1/2/3/4/5% more for each party member there (counting at most 10).", icon: "pr_gloria", slot: 17 },
     Skill { id: 7014, internal: "SAM_DESTINYS_SEVERANCE", name: "Destiny's Severance", description: "Mortal Flame / Tenseiga. The strike that severed the bond between divinity and mortal destiny. Strike one enemy for 8000/12000/16000/20000/24000% ATK (x base level / 100), ignoring DEF, and 50% more against boss monsters.", icon: "asc_breaker", slot: 23 },
+    Skill { id: 7015, internal: "SAM_CRESCENT_GALE", name: "Crescent Gale", description: "Mortal Flame / Tenseiga. Hayate's will, loosed from Tenseiga's edge as a crescent of mortal flame. It tears through every enemy on an 11-cell path, 3 cells wide, toward the target, for 5500/8000/10500/13000/15500% ATK (x base level / 100). Ranged.", icon: "kn_brandishspear", slot: 9 },
 ];
 
 /// What the skill window says about each skill's use. Matches db/custom/samurai/skill_db.yml
@@ -112,10 +113,11 @@ fn usage(id: u16) -> Use {
         7012 => ((60, 60.0, 0.3), "Self", Some("Mortal Flame Lv 1")),
         7013 => ((100, 120.0, 1.0), "Party members within 7 cells", Some("Unchained Will Lv 3")),
         7014 => ((150, 20.0, 1.0), "One enemy, range 2 cells", Some("Light and Shadow Lv 5, Forge of Ten Souls Lv 3")),
+        7015 => ((120, 6.0, 0.5), "Enemies on a path toward one enemy, range 9 cells", Some("Severing Heaven's Lies Lv 5")),
         _ => unreachable!("Samurai skill metadata"),
     };
     let weapon = if id >= 7010 { TENSEIGA_ONLY } else { ANY_BLADE };
-    Use { max_level: 5, cost: Some(cost), target, weapon, prerequisite, cast: (id == 7014).then_some(1.0) }
+    Use { max_level: 5, cost: Some(cost), target, weapon, prerequisite, cast: match id { 7014 => Some(1.0), 7015 => Some(0.5), _ => None } }
 }
 
 pub fn register(names: &mut ro_game::skills::SkillNames, tree: &mut crate::skilltree::SkillTree) {
@@ -161,11 +163,11 @@ mod tests {
         register(&mut names, &mut tree);
         let tabs = tree.tabs(JOB);
         assert_eq!(tabs.iter().map(|t| t.0).collect::<Vec<_>>(), [4013, JOB]);
-        assert_eq!(tabs[1].1.len(), 14);
+        assert_eq!(tabs[1].1.len(), 15);
         let mut slots: Vec<_> = tabs[1].1.iter().map(|(slot, _)| *slot).collect();
         slots.sort();
         slots.dedup();
-        assert_eq!(slots.len(), 14, "no two skills share a slot");
+        assert_eq!(slots.len(), 15, "no two skills share a slot");
         for (slot, name) in tabs[1].1 {
             // Kusanagi in column 0, Muramasa in column 4, the Mortal Flame line between them.
             assert!(slot % crate::skilltree::COLUMNS <= 4);

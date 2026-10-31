@@ -3362,6 +3362,9 @@ impl App {
                 if skill == 406 {
                     self.meteor_assault(act.src);
                 }
+                if let (7015, Some(from), Some(to)) = (skill, self.unit_pos(act.src), self.unit_pos(target)) {
+                    self.crescent_gale(act.src, from, to);
+                }
                 self.act(act);
                 self.skill_fx(skill, self.unit_pos(target), true);
             }
@@ -5101,6 +5104,23 @@ impl App {
             let dir = glam::Vec3::new(a.cos(), 0.0, a.sin()) * CELL;
             let shape = Shape::Slash { travel: dir * 4.0, size: (1.0, 2.0) };
             self.proc_fx("purpleslash.tga", shape, at + dir, [1.0, 1.0, 1.0], 500.0);
+        }
+    }
+
+    /// Crescent Gale: a crescent of mortal flame flying from the caster past the target, the
+    /// server's 11-cell path. Every enemy on the path reports a hit, so it plays once per cast.
+    fn crescent_gale(&mut self, src: u32, from: glam::Vec3, to: glam::Vec3) {
+        let now = std::time::Instant::now();
+        if self.burst_at.get(&src).is_some_and(|t| now.duration_since(*t).as_millis() < 400) {
+            return;
+        }
+        self.burst_at.insert(src, now);
+        let travel = (to - from).normalize_or_zero() * ro_render::CELL * 11.0;
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let Some(tex) = self.fx.fx_texture(r, vfs, fx::FxTexture::Streak) else { return };
+        for solid in [true, false] {
+            let shape = ro_render::Shape::Crescent { travel, solid };
+            r.procs.push(ro_render::ProcFx { tex, shape, pos: from, color: [1.0; 3], time_ms: 0.0, duration_ms: 800.0 });
         }
     }
 
@@ -6944,6 +6964,9 @@ impl App {
                 let pos = self.unit_pos(self.account_id).or_else(|| self.player.as_ref().map(|p| p.actor.pos));
                 if let (137, Some(p)) = (id, pos) {
                     self.spike_line(p, p + glam::Vec3::new(6.0 * ro_render::CELL, 0.0, -3.0 * ro_render::CELL));
+                }
+                if let (7015, Some(p)) = (id, pos) {
+                    self.crescent_gale(self.account_id, p, p + glam::Vec3::new(6.0 * ro_render::CELL, 0.0, -3.0 * ro_render::CELL));
                 }
                 self.skill_fx(id, pos, true);
             }

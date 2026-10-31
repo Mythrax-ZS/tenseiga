@@ -344,6 +344,22 @@ def destinys_severance():
     return c.rows()
 
 
+def crescent_gale():
+    """A crescent of mortal flame flying right: cyan-white at its leading edge, crimson
+    within, magenta and violet streaks trailing it."""
+    c = Canvas()
+    for y, x0, x1, col in ((4, 1, 9, "v"), (6, 0, 10, "p"), (8, 2, 10, "v"), (10, 0, 9, "p"), (12, 3, 8, "v")):
+        c.line(x0, y, x1, y, col)
+    for y in range(16):
+        for x in range(18):
+            outer, inner = math.hypot(x - 7.5, y - 7.5), math.hypot(x - 2.8, y - 7.5)
+            if outer > 7.6 or inner < 7.4:
+                continue
+            edge = 7.6 - outer
+            c.put(x, y, "W" if edge < 0.7 else "Q" if edge < 1.3 else "q" if edge < 1.8 else "K" if inner > 8.0 else "z")
+    return c.rows()
+
+
 ICONS.update({
     "sam_mortal_flame": mortal_flame(),
     "sam_sever_heavens_lies": sever_heavens_lies(),
@@ -351,6 +367,7 @@ ICONS.update({
     "sam_unchained_will": unchained_will(),
     "sam_forge_of_ten_souls": forge_of_ten_souls(),
     "sam_destinys_severance": destinys_severance(),
+    "sam_crescent_gale": crescent_gale(),
 })
 
 

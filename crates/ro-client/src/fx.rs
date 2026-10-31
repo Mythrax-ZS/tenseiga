@@ -80,6 +80,12 @@ pub fn tenseiga_layers(skill: u16) -> &'static [(Option<(ro_render::TenseigaPart
             (Some((Beam, false)), FxTexture::Streak, 900.0, CRIMSON),
             (Some((Spark, false)), FxTexture::Glow, 900.0, WHITE),
         ],
+        // Crescent Gale, on each enemy the crescent tears through (the crescent itself flies
+        // from the caster: `App::crescent_gale`).
+        7015 => &[
+            (Some((Spark, true)), FxTexture::Glow, 500.0, CRIMSON),
+            (Some((Spark, false)), FxTexture::Glow, 500.0, CYAN),
+        ],
         _ => &[],
     }
 }
@@ -93,7 +99,7 @@ pub fn skill_visual(skill: u16) -> Option<Visual> {
         7007 => Visual::Str("brandish"),
         7008 => Visual::Str("bowling"),
         // The Mortal Flame line, in Tenseiga's colours where they are tinted.
-        7010..=7014 => Visual::Tenseiga,
+        7010..=7015 => Visual::Tenseiga,
         28 => Visual::Column("alpha_down.tga", [0.3, 0.55, 0.3]),
         29 => Visual::Column("agi_up.bmp", [0.7, 1.0, 0.8]),
         30 => Visual::Column("alpha_down.tga", [0.25, 0.25, 0.55]),

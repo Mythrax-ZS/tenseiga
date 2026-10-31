@@ -81,22 +81,24 @@ locations. The artwork was generated with the built-in image-generation tool.
 Source images retain their generated alpha; nearest-neighbor sampling and ACT
 placement are reproducible from the metadata.
 
-All fourteen skills have their own 24x24 icons (`data/texture/유저인터페이스/item/sam_*.bmp`),
+All fifteen skills have their own 24x24 icons (`data/texture/유저인터페이스/item/sam_*.bmp`),
 pixel art in the manner of the Guillotine Cross icons, drawn by
-[skill_icons.py](../../tools/samurai_assets/skill_icons.py). The six skills of the
-Mortal Flame line (Tenseiga's techniques, 7009-7014) are drawn from shapes in Tenseiga's
+[skill_icons.py](../../tools/samurai_assets/skill_icons.py). The seven skills of the
+Mortal Flame line (Tenseiga's techniques, 7009-7015) are drawn from shapes in Tenseiga's
 colours (crimson hilt, magenta runes, violet body, cyan edge), on an indigo field. Their two
 buffs (`efst_sam_unchained_will.tga`, `efst_sam_forge_of_ten_souls.tga`) use a matching
 theme in [buff_icons.py](../../tools/samurai_assets/buff_icons.py). The line sits in the
 skill tree's middle columns, between the Kusanagi and Muramasa branches.
 
-The line's five active skills also have their own effects, drawn in code in Tenseiga's
+The line's six active skills also have their own effects, drawn in code in Tenseiga's
 crimson, cyan and gold (`TenseigaPart` in `crates/ro-render/src/effect.rs`, layered per
 skill by `tenseiga_layers` in `crates/ro-client/src/fx.rs`): a crimson crescent cut that
 breaks a golden halo (Severing Heaven's Lies), a gold and a crimson cut crossing (Light and
 Shadow), a cyan burst of chain shards (Unchained Will), ten souls spiralling up from a
-crimson ring (Forge of Ten Souls) and a blade of light falling from the sky (Destiny's
-Severance). Crimson is painted as solid colour with a glowing core over it, so it stays
+crimson ring (Forge of Ten Souls), a blade of light falling from the sky (Destiny's
+Severance) and a crescent of flame flying from the caster through every enemy on its
+path, leaving a scorched line behind it (Crescent Gale, `Shape::Crescent`). Crimson is
+painted as solid colour with a glowing core over it, so it stays
 crimson on pale ground instead of washing out to pink. `--fx skill:<id>` replays one on
 the player every 1.5 seconds.
 
