@@ -2145,3 +2145,251 @@ pub enum RouletteNote {
     Spun { result: u8, step: u16, idx: u16, bonus: u32, points: [u32; 3] },
     Claimed { result: u8, bonus: u32 },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A variable-length packet: opcode, u16 total length, body.
+    fn packet(opcode: u16, body: &[u8]) -> Vec<u8> {
+        let mut p = opcode.to_le_bytes().to_vec();
+        p.extend(((body.len() + 4) as u16).to_le_bytes());
+        p.extend(body);
+        p
+    }
+
+    #[test]
+    fn pin_state_reads_seed_and_state() {
+        let mut data = vec![0xb9, 0x08];
+        data.extend(0xdead_beefu32.to_le_bytes());
+        data.extend(2_000_000u32.to_le_bytes());
+        data.extend(4u16.to_le_bytes());
+        assert_eq!(parse_pin_state(&data), (0xdead_beef, 4));
+    }
+
+    #[test]
+    fn login_errors_name_the_refusal() {
+        assert_eq!(login_error(1), "Incorrect password.");
+        assert_eq!(login_error(8), "This account is already logged in.");
+        assert_eq!(login_error(42), "Login refused (error 42).");
+    }
+
+    #[test]
+    fn item_obtained_from_a_box_and_from_a_monster() {
+        let mut body = vec![0];
+        body.extend(607u32.to_le_bytes());
+        body.push(5);
+        body.extend(b"Tifa\0");
+        body.push(0);
+        body.extend(12246u32.to_le_bytes());
+        let Some(Event::ItemObtained { who, item, from_box, source }) = parse_item_obtained(&packet(0x07fd, &body)) else { panic!("not parsed") };
+        assert_eq!((who.as_str(), item, from_box, source.as_str()), ("Tifa", 607, Some(12246), ""));
+
+        let mut body = vec![1];
+        body.extend(4128u32.to_le_bytes());
+        body.push(4);
+        body.extend(b"Cid\0");
+        body.push(6);
+        body.extend(b"Baphom");
+        let Some(Event::ItemObtained { who, item, from_box, source }) = parse_item_obtained(&packet(0x07fd, &body)) else { panic!("not parsed") };
+        assert_eq!((who.as_str(), item, from_box, source.as_str()), ("Cid", 4128, None, "Baphom"));
+    }
+
+    #[test]
+    fn item_obtained_cut_short_is_ignored() {
+        let mut body = vec![1];
+        body.extend(4128u32.to_le_bytes());
+        body.push(20); // longer than what follows
+        body.extend(b"Cid");
+        assert!(parse_item_obtained(&packet(0x07fd, &body)).is_none());
+    }
+
+    #[test]
+    fn notices_follow_the_result_codes() {
+        assert_eq!(notice_text(0x013b, &[0x3b, 0x01, 1, 0]).as_deref(), Some("You can't attack or use skills because your weight limit has been exceeded."));
+        assert_eq!(notice_text(0x013b, &[0x3b, 0x01, 9, 0]), None);
+        assert_eq!(notice_text(0x0189, &[0x89, 0x01]), None, "a short packet is not read past its end");
+        assert_eq!(notice_text(0x0bae, &[0xae, 0x0b, 0]), None, "success says nothing");
+
+        let mut party = vec![0xc5, 0x02];
+        party.extend(b"Aerith");
+        party.resize(26, 0);
+        party.extend(1i32.to_le_bytes());
+        assert_eq!(notice_text(0x02c5, &party).as_deref(), Some("Aerith declined the party invitation."));
+
+        let mut refine = vec![0x23, 0x02];
+        refine.extend(2u32.to_le_bytes());
+        assert_eq!(notice_text(0x0223, &refine).as_deref(), Some("You can't upgrade this until you level up the upgrade skill."));
+        assert_eq!(notice_text(0x9999, &[0x99, 0x99]), None);
+    }
+
+    // The sessions against fake servers on loopback: the bytes the client sends, and what it
+    // makes of the bytes rAthena sends back (layouts in ro-proto's packets.rs).
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn listen() -> (TcpListener, std::net::SocketAddrV4) {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let std::net::SocketAddr::V4(addr) = l.local_addr().unwrap() else { unreachable!() };
+        (l, addr)
+    }
+
+    async fn read_n(s: &mut TcpStream, n: usize) -> Vec<u8> {
+        let mut b = vec![0; n];
+        s.read_exact(&mut b).await.unwrap();
+        b
+    }
+
+    fn fixed(opcode: u16, len: usize, fields: &[(usize, &[u8])]) -> Vec<u8> {
+        let mut p = vec![0; len];
+        p[..2].copy_from_slice(&opcode.to_le_bytes());
+        for (at, bytes) in fields {
+            p[*at..at + bytes.len()].copy_from_slice(bytes);
+        }
+        p
+    }
+
+    /// A 175-byte CHARACTER_INFO.
+    fn char_record(char_id: u32, slot: u8, name: &str) -> Vec<u8> {
+        let mut r = vec![0; 175];
+        r[..4].copy_from_slice(&char_id.to_le_bytes());
+        r[108..108 + name.len()].copy_from_slice(name.as_bytes());
+        r[138] = slot;
+        r
+    }
+
+    fn auth() -> AcceptLogin {
+        AcceptLogin { login_id1: 11, account_id: 2_000_000, login_id2: 22, sex: 1, web_token: String::new(), servers: vec![] }
+    }
+
+    #[tokio::test]
+    async fn login_sends_the_account_and_reads_the_server_list() {
+        let (l, addr) = listen().await;
+        let server = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let ca = read_n(&mut s, 55).await;
+            assert_eq!(&ca[..2], &0x0064u16.to_le_bytes());
+            assert_eq!(&ca[6..10], b"test");
+            assert_eq!(&ca[30..34], b"pass");
+            let mut body = Vec::new();
+            for v in [11u32, 2_000_000, 22, 0] {
+                body.extend(v.to_le_bytes());
+            }
+            body.extend([0; 26]);
+            body.push(1);
+            body.extend(b"token0123456789ab");
+            let mut server = vec![127, 0, 0, 1];
+            server.extend(6121u16.to_le_bytes());
+            server.extend(b"Tenseiga");
+            server.resize(26, 0);
+            server.extend(7u16.to_le_bytes());
+            server.resize(160, 0);
+            body.extend(server);
+            s.write_all(&packet(0x0ac4, &body)).await.unwrap();
+        });
+        let ok = login(&addr.to_string(), "test", "pass").await.unwrap();
+        server.await.unwrap();
+        assert_eq!((ok.login_id1, ok.account_id, ok.login_id2, ok.sex), (11, 2_000_000, 22, 1));
+        assert_eq!(ok.servers.len(), 1);
+        let cs = &ok.servers[0];
+        assert_eq!((cs.addr.to_string().as_str(), cs.name.as_str(), cs.users), ("127.0.0.1:6121", "Tenseiga", 7));
+    }
+
+    #[tokio::test]
+    async fn login_refusal_is_an_error_with_its_code() {
+        let (l, addr) = listen().await;
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            read_n(&mut s, 55).await;
+            s.write_all(&fixed(0x083e, 26, &[(2, &1u32.to_le_bytes())])).await.unwrap();
+        });
+        let e = login(&addr.to_string(), "test", "wrong").await.unwrap_err();
+        assert_eq!(e.to_string(), "login refused, error 1");
+    }
+
+    #[tokio::test]
+    async fn char_select_lists_pages_and_picks_a_zone() {
+        let (l, addr) = listen().await;
+        let server = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let ch = read_n(&mut s, 17).await;
+            assert_eq!(&ch[..2], &0x0065u16.to_le_bytes());
+            assert_eq!(&ch[2..6], &2_000_000u32.to_le_bytes());
+            // The bare account id, then the characters: one in the accept, then pages of three.
+            s.write_all(&2_000_000u32.to_le_bytes()).await.unwrap();
+            let mut accept = vec![0; 23];
+            accept.extend(char_record(150_001, 1, "Hayate"));
+            s.write_all(&packet(0x006b, &accept)).await.unwrap();
+            s.write_all(&fixed(0x09a0, 6, &[(2, &2u32.to_le_bytes())])).await.unwrap();
+            assert_eq!(read_n(&mut s, 2).await, 0x09a1u16.to_le_bytes());
+            let page: Vec<u8> = [char_record(150_002, 2, "Kohaku"), char_record(150_001, 1, "Hayate"), char_record(150_000, 0, "Tester")].concat();
+            s.write_all(&packet(0x0b72, &page)).await.unwrap();
+            s.write_all(&fixed(0x08b9, 12, &[(2, &0x1234u32.to_le_bytes()), (10, &1u16.to_le_bytes())])).await.unwrap();
+            s.write_all(&packet(0x0b72, &[])).await.unwrap(); // a short page ends the list
+            assert_eq!(read_n(&mut s, 3).await, [0x66, 0x00, 1]);
+            let zone = fixed(0x0ac5, 156, &[(2, &150_001u32.to_le_bytes()), (6, b"amatsu.gat"), (22, &[127, 0, 0, 1]), (26, &5121u16.to_le_bytes())]);
+            s.write_all(&zone).await.unwrap();
+        });
+        let cs = CharServerInfo { addr, name: "Tenseiga".into(), users: 0 };
+        let session = enter_char(&cs, &auth()).await.unwrap();
+        let listed: Vec<(u8, &str)> = session.characters.iter().map(|c| (c.slot, c.name.as_str())).collect();
+        assert_eq!(listed, [(0, "Tester"), (1, "Hayate"), (2, "Kohaku")], "sorted by slot, the repeat dropped");
+        assert_eq!((session.slots, session.pin), (6, (0x1234, 1)));
+        let zone = session.select(1).await.unwrap();
+        server.await.unwrap();
+        assert_eq!((zone.char_id, zone.map.as_str(), zone.addr.to_string().as_str()), (150_001, "amatsu.gat", "127.0.0.1:5121"));
+    }
+
+    #[tokio::test]
+    async fn map_session_turns_packets_into_events_and_commands_into_packets() {
+        let (l, addr) = listen().await;
+        let server = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let cz = read_n(&mut s, 23).await;
+            assert_eq!(&cz[..2], &0x0436u16.to_le_bytes());
+            assert_eq!(&cz[6..10], &150_001u32.to_le_bytes());
+            // Spawn at 150,100.
+            let (x, y) = (150u16, 100u16);
+            let pos = [(x >> 2) as u8, (((x & 3) << 6) | (y >> 4)) as u8, ((y & 0xf) << 4) as u8];
+            s.write_all(&fixed(0x02eb, 13, &[(6, &pos)])).await.unwrap();
+            assert_eq!(read_n(&mut s, 2).await, 0x007du16.to_le_bytes());
+            let mut chat = 7u32.to_le_bytes().to_vec();
+            chat.extend(b"Tifa : hello\0");
+            s.write_all(&packet(0x008d, &chat)).await.unwrap();
+            // Keepalives may come first; the walk request is what the test sent.
+            loop {
+                let op = u16::from_le_bytes(read_n(&mut s, 2).await.try_into().unwrap());
+                match op {
+                    0x0360 => _ = read_n(&mut s, 4).await,
+                    0x035f => {
+                        let p = read_n(&mut s, 3).await;
+                        let x = ((p[0] as u16) << 2) | (p[1] as u16 >> 6);
+                        let y = (((p[1] & 0x3f) as u16) << 4) | (p[2] as u16 >> 4);
+                        return ((x, y), s); // held open until the session ends
+                    }
+                    op => panic!("unexpected {op:#06x}"),
+                }
+            }
+        });
+        let zone = ZoneServer { char_id: 150_001, map: "prontera.gat".into(), addr };
+        let map = enter_map(&zone, &auth()).await.unwrap();
+        assert_eq!((map.spawn.x, map.spawn.y), (150, 100));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (events_tx, events) = std::sync::mpsc::channel();
+        let run = tokio::spawn(async move { map.run("Hayate", &mut rx, &events_tx).await });
+        let chat = tokio::task::spawn_blocking(move || loop {
+            if let Event::Chat { kind, from, text, .. } = events.recv_timeout(Duration::from_secs(5)).expect("no chat event") {
+                return (kind, from, text);
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(chat, (ChatKind::Public, Some(7), "Tifa : hello".to_string()));
+        tx.send(Command::Move { x: 153, y: 98 }).unwrap();
+        let (walk, _open) = server.await.unwrap();
+        assert_eq!(walk, (153, 98));
+        drop(tx);
+        assert!(matches!(run.await.unwrap(), Ok(MapExit::Closed)), "closing the command channel ends the session");
+    }
+}
