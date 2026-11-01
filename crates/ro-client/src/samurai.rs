@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn starter_item_metadata_resolves_to_the_matching_katana_view() {
         let path = overlay_path().unwrap().join("System/samurai_iteminfo.lua");
-        let entries = crate::customdata::iteminfo(&std::fs::read(&path).unwrap(), "samurai_iteminfo.lua");
+        let entries = crate::customdata::iteminfo(&std::fs::read(&path).unwrap(), "samurai_iteminfo.lua", &|_| None);
         let mut db = ro_game::items::ItemDb::default();
         db.extend(entries);
         let info = db.get(900000).expect("starter katana metadata");
@@ -271,7 +271,7 @@ mod tests {
     fn legendary_item_metadata_resolves_bundled_icons_and_visible_floor_sprites() {
         let root = overlay_path().expect("bundled Samurai overlay");
         let entries = crate::customdata::iteminfo(
-            &std::fs::read(root.join("System/samurai_iteminfo.lua")).unwrap(), "samurai_iteminfo.lua");
+            &std::fs::read(root.join("System/samurai_iteminfo.lua")).unwrap(), "samurai_iteminfo.lua", &|_| None);
         let mut db = ro_game::items::ItemDb::default();
         db.extend(entries);
         assert!(db.get(1164).is_none()); // Do not replace the stock two-handed Muramasa.

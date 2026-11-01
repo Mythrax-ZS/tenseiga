@@ -8708,7 +8708,7 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         // Custom items still work when an installation supplies only text item info.
         for p in customdata::ITEMINFO_SOURCES {
             if let Some(src) = read(p) {
-                db.extend(customdata::iteminfo(&src, p));
+                db.extend(customdata::iteminfo(&src, p, &read));
             }
         }
         if !db.is_empty() {
