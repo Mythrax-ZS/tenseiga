@@ -72,6 +72,25 @@ instantly. There's one pipeline and no shader permutations.
 | `F_INTERACT` | Wading | actors standing in water get a wobbling foam collar and shed ripple rings (a trail of them while walking, the wake; a slow pulse while standing), up to 48 rings and 16 waders. Sprites sink to the waterline (capped at knee height, since RO seabeds are often far below the surface), tinted and faded below it with a wet line where they break the surface. Rings are centred where the eye ray through the waterline meets the surface, so they sit at the sprite on screen (Low and up) |
 | (always) | Variation | a slow, large-scale field varies ripple strength (glassy vs choppy patches), the water tint, clarity (murky vs clear patches), haze and where the sun glitters, so a bay never reads as one flat repeat; ripple layers are rotated and at unrelated scales so their tiling never lines up |
 
+### Lava
+
+RSW water types 4 (molten) and 6 (a cooling crust with glowing cracks) are RO's lava, as in
+the Magma Dungeon. On every preset but Classic they get `F_LAVA` (set per map in
+`Water::update`) and their own shading in `lava()` instead of the water's:
+
+* opaque and lit from within: no reflection, refraction tint, foam, glitter, caustics or
+  wading (sprites don't sink into it either);
+* RO's own lava frames creep under a slow, coarse domain warp, and their brightness is the
+  heat, mapped along a dark red → orange → yellow-white ramp kept near 1 so tone mapping
+  doesn't flatten it to yellow;
+* dark crust plates (cells of the cellular pattern, two layers drifting apart) float on the
+  melt with hot seams; more of them toward the shore, where it has cooled;
+* a slow swell of heat across the surface, a thin flickering hot line against the rock, and
+  a thick, slow swell (a quarter of the water's height, a fifth of its speed).
+
+`cargo run -p ro-formats --example waterkinds -- map.gnd map.rsw` prints a map's water type
+and the ground textures under it.
+
 ### HLSL / GLSL / SPIR-V
 
 WGSL is the only source. wgpu translates it for every backend at run time (Vulkan, DX12,
