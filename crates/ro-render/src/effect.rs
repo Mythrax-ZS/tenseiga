@@ -99,6 +99,9 @@ pub enum Shape {
     /// opaque. `pos` is the cell's low corner (y 0) and `heights` its corners' ground heights
     /// (low x low z, then round: high x, both high, high z).
     Cell { heights: [f32; 4] },
+    /// EF_COLORPAPER, the wedding ceremony: scraps of coloured paper showering down around
+    /// `pos` and tumbling as they fall (alpha-blended, so they keep their colours).
+    Confetti { seed: u32 },
 }
 
 /// The pieces the Mortal Flame skills' effects are built from. Streaks and rings use
@@ -220,7 +223,7 @@ pub enum AuraLayer {
 impl ProcFx {
     /// Drawn alpha-blended (darkening) rather than added.
     pub fn shades(&self) -> bool {
-        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. })
+        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. })
     }
 }
 
@@ -313,6 +316,37 @@ fn aura(layer: AuraLayer, seed: u32, style: AuraStyle, pos: Vec3, time_ms: f32, 
                 out.extend([p0, p1, p2, p0, p2, p3]);
             }
         }
+    }
+}
+
+/// EF_COLORPAPER: 90 scraps let go over the first 1.5 s, 3 to 5 cells up within 2.5 cells of
+/// `pos`, swaying as they fall a cell or so a second, spinning and tumbling (their width
+/// turning edge-on and back), fading over the last cell above the ground. All are down by 6.5 s.
+fn confetti(seed: u32, pos: Vec3, time_ms: f32, eye: Vec3, out: &mut Vec<Vertex>) {
+    const COLORS: [[f32; 3]; 6] = [[1.0, 0.25, 0.35], [1.0, 0.82, 0.2], [0.3, 0.6, 1.0], [0.35, 0.85, 0.45], [1.0, 0.55, 0.85], [1.0, 1.0, 1.0]];
+    let fwd = (pos - eye).normalize_or_zero();
+    let right = fwd.cross(Vec3::Y).normalize_or_zero();
+    let up = right.cross(fwd);
+    let tau = std::f32::consts::TAU;
+    for j in 0..90u32 {
+        let r = |n: u32| (hash(seed ^ j.wrapping_mul(0x9e37_79b9) ^ n.wrapping_mul(0x85eb_ca6b)) & 0xffff) as f32 / 65535.0;
+        // Seconds since this scrap was let go.
+        let t = (time_ms - r(1) * 1500.0) / 1000.0;
+        let height = 3.0 + r(3) * 2.0 - (1.0 + r(2) * 0.6) * t;
+        if t < 0.0 || height <= 0.0 {
+            continue;
+        }
+        let (angle, reach) = (r(4) * tau, r(5).sqrt() * 2.5 * CELL);
+        let sway = (t * (2.0 + r(6) * 2.0) + r(7) * tau).sin() * 0.35 * CELL;
+        let centre = pos + Vec3::new(angle.cos() * reach + sway, height * CELL, angle.sin() * reach);
+        let (s, c) = (t * (5.0 + r(8) * 6.0) + r(9) * tau).sin_cos();
+        let flip = (t * (6.0 + r(10) * 6.0) + r(12) * tau).cos();
+        let (a, b) = ((right * c + up * s) * (0.09 * CELL * flip), (up * c - right * s) * (0.06 * CELL));
+        let [red, green, blue] = COLORS[(r(11) * 6.0) as usize % 6];
+        let color = [red, green, blue, height.min(1.0)];
+        let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color };
+        let (p0, p1, p2, p3) = (v(centre - a - b, 0.0, 1.0), v(centre + a - b, 1.0, 1.0), v(centre + a + b, 1.0, 0.0), v(centre - a + b, 0.0, 0.0));
+        out.extend([p0, p1, p2, p0, p2, p3]);
     }
 }
 
@@ -689,6 +723,7 @@ impl ProcFx {
                 let (a, b, cc, d) = (v(corner(-r, -r), 0.0, 0.0), v(corner(r, -r), 1.0, 0.0), v(corner(r, r), 1.0, 1.0), v(corner(-r, r), 0.0, 1.0));
                 out.extend([a, b, cc, a, cc, d]);
             }
+            Shape::Confetti { seed } => confetti(seed, self.pos, self.time_ms, eye, out),
             Shape::Cell { heights } => {
                 let color = [self.color[0], self.color[1], self.color[2], 0.5];
                 let v = |i: usize, x: f32, z: f32| Vertex { pos: (self.pos + Vec3::new(x * CELL, heights[i] + 0.2, z * CELL)).into(), uv: [x, z], color };

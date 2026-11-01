@@ -31,6 +31,8 @@ pub enum FxTexture {
     Glow,
     /// effect\alpha_down.tga, drawn as the stock light column.
     Column,
+    /// Solid white (generated): scraps of paper.
+    Paper,
 }
 
 /// The layers of a Mortal Flame skill's effect: (piece and whether it is the solid colour
@@ -683,6 +685,7 @@ impl FxLib {
             FxTexture::Glow => return self.texture(r, vfs, "whitelight.tga"),
             FxTexture::Column => return self.texture(r, vfs, "alpha_down.tga"),
             // Bright along v = 0.5, fading to nothing at both edges.
+            FxTexture::Paper => (4, |_, _| 1.0),
             FxTexture::Streak => (64, |_, v| (-((v - 0.5) / 0.2).powi(2)).exp()),
             // Solid in the middle, fading out over the outer three quarters.
             FxTexture::Disc => (64, |u, v| {

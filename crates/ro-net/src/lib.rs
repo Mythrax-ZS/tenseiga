@@ -645,6 +645,8 @@ pub enum Event {
     AutorunSkill { id: u16, target: u32, level: u16 },
     /// A one-line notice the original shows in chat (map info, warp memo, cart, ammo...).
     Notice(String),
+    /// ZC_CONGRATULATION: a unit was just married (the ceremony's effect plays on it).
+    Wedding(u32),
     /// ZC_ACK_ITEMIDENTIFY: an item was identified.
     Identified(u16),
     /// ZC_EQUIP_ARROW: this item is now the equipped ammunition.
@@ -1252,7 +1254,8 @@ impl MapSession {
                             _ => Some(Event::Notice("The item could not be identified.".into())),
                         },
                         0x013c if data.len() >= 4 => Some(Event::ArrowEquipped(u16::from_le_bytes([data[2], data[3]]))),
-                        0x013b | 0x0189 | 0x02d3 | 0x0a28 | 0x011e | 0x012c | 0x02bb | 0x0223 | 0x01fe | 0x0b17 | 0x0bae | 0x02c5 | 0x0205 | 0x01ea | 0x0aa7 => notice_text(opcode, &data).map(Event::Notice),
+                        0x013b | 0x0189 | 0x02d3 | 0x0a28 | 0x011e | 0x012c | 0x02bb | 0x0223 | 0x01fe | 0x0b17 | 0x0bae | 0x02c5 | 0x0205 | 0x0aa7 => notice_text(opcode, &data).map(Event::Notice),
+                        0x01ea if data.len() >= 6 => Some(Event::Wedding(u32::from_le_bytes([data[2], data[3], data[4], data[5]]))),
                         0x0152 if data.len() >= 12 => Some(Event::GuildEmblem { guild: u32::from_le_bytes([data[4], data[5], data[6], data[7]]), version: u32::from_le_bytes([data[8], data[9], data[10], data[11]]), data: data[12..].to_vec() }),
                         0x010c if data.len() >= 6 => Some(Event::Mvp(u32::from_le_bytes([data[2], data[3], data[4], data[5]]))),
                         0x010a if data.len() >= 6 => Some(Event::MvpItem(u32::from_le_bytes([data[2], data[3], data[4], data[5]]))),
@@ -2118,8 +2121,6 @@ fn notice_text(opcode: u16, data: &[u8]) -> Option<String> {
             let mut b = data.get(2..)?;
             format!("You are now divorced from {}.", get_fixed_str(&mut b, 24))
         }
-        // ZC_CONGRATULATION
-        0x01ea => "Congratulations on the wedding!".into(),
         // ZC_MOVE_ITEM_FAILED
         0x0aa7 => "That item couldn't be moved.".into(),
         // ZC_ACK_ITEMREPAIR

@@ -4055,6 +4055,8 @@ impl App {
                     self.hud.push_chat(ro_net::ChatKind::System, text.into());
                 }
             }
+            // EF_COLORPAPER: the wedding ceremony's paper shower.
+            ScriptEffect { id, effect: 347 } | Wedding(id) => self.wedding_fx(id),
             ScriptEffect { id, effect } => {
                 if let Some(q) = fx::ef_quake(effect) {
                     self.quake(q);
@@ -5191,6 +5193,19 @@ impl App {
         let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
         if let Some(tex) = self.fx.texture(r, vfs, tex) {
             r.procs.push(ro_render::ProcFx { tex, shape, pos, color, time_ms: 0.0, duration_ms });
+        }
+    }
+
+    /// The wedding ceremony (ZC_CONGRATULATION, EF_COLORPAPER): coloured paper showering down
+    /// on the newlyweds, to effect\wedding.wav. The original draws it in code.
+    fn wedding_fx(&mut self, id: u32) {
+        let Some(pos) = self.unit_pos(id) else { return };
+        self.play_sound("effect\\wedding.wav");
+        self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        if let Some(tex) = self.fx.fx_texture(r, vfs, fx::FxTexture::Paper) {
+            let shape = ro_render::Shape::Confetti { seed: self.spark_seed ^ id };
+            r.procs.push(ro_render::ProcFx { tex, shape, pos, color: [1.0; 3], time_ms: 0.0, duration_ms: 6500.0 });
         }
     }
 
