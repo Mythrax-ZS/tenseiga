@@ -25,6 +25,9 @@ server is, and the char server tells it where the map server is. Those two addre
 
 ## 1. The server
 
+> **On OpenMediaVault 6?** Read [1.9](#19-on-openmediavault-6) first. It changes where the
+> server goes, how the database runs, and how the firewall and autostart work.
+
 ### 1.1 Get the code
 
 ```
@@ -218,7 +221,7 @@ select. A wrong `map_ip` shows as the same thing after picking a character.
 Open the ports in the firewall:
 
 ```
-# Linux (ufw)
+# Linux with ufw (not OpenMediaVault, see 1.9)
 sudo ufw allow 6900,6121,5121,8888/tcp
 
 # Windows (PowerShell as administrator)
@@ -232,11 +235,12 @@ Never forward or open port 3306 (the database).
 **Linux:**
 
 ```
-./athena-start start      # also: stop, restart
+./athena-start start      # also: stop, restart, status
 ```
 
-It starts all four servers in the background, restarts any that crash, and writes their logs to
-`log/`.
+It starts all four servers in the background and writes their logs to `log/`.
+`./athena-start watch 10` instead stays running and restarts any server that stops, checking
+every 10 seconds; [1.9](#19-on-openmediavault-6) uses it to run the server as a service.
 
 **Windows:** run `runserver.bat`. It opens a window for each server. You can also start
 `login-server.exe`, `char-server.exe`, `web-server.exe` and `map-server.exe` yourself, in that
@@ -261,6 +265,92 @@ log in again for it to apply:
 ```sql
 UPDATE login SET group_id = 99 WHERE userid = 'player';
 ```
+
+### 1.9 On OpenMediaVault 6
+
+OpenMediaVault (OMV) 6 is Debian 11 underneath, so the Linux steps above work, with these
+differences. Run the commands as root over SSH (turn SSH on in the OMV web UI under
+**Services > SSH**; OMV has no `sudo` by default, so drop it from the commands above).
+
+**Put the server on the system disk, not a data drive.** OMV usually mounts data drives with
+`noexec`, so programs on them won't start ("Permission denied"). Check a drive with
+`findmnt -no OPTIONS /srv/dev-disk-by-uuid-...`. Use `/opt/tenseiga-athena` instead. The
+database's files can live on a data drive, since they aren't programs.
+
+**Run MariaDB in a container.** OMV's way to run extra services is Docker, through the
+**Compose** plugin (install omv-extras, then **System > Plugins > openmediavault-compose**).
+Add this as a new compose file under **Services > Compose > Files**, set the passwords and
+the data path to a shared folder on a data drive, and start it:
+
+```yaml
+services:
+  ro-db:
+    image: mariadb:11
+    container_name: ro-db
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: <root password>
+      MARIADB_DATABASE: ragnarok
+      MARIADB_USER: ragnarok
+      MARIADB_PASSWORD: <db password>
+    volumes:
+      - /srv/dev-disk-by-uuid-<your drive>/appdata/ro-db:/var/lib/mysql
+```
+
+Then load the tables as in [1.2](#12-the-database-mariadb), with
+`docker exec -i ro-db mariadb -u ragnarok -p'<db password>' ragnarok < sql-files/main.sql` and
+so on.
+
+**Build as its own user:**
+
+```
+apt install git make gcc g++ libmariadb-dev libmariadb-dev-compat zlib1g-dev libpcre3-dev python3
+useradd --system --create-home --home-dir /opt/tenseiga-athena --shell /bin/bash tenseiga
+su - tenseiga -c "git clone https://github.com/Mythrax-ZS/tenseiga-athena.git /opt/tenseiga-athena"
+su - tenseiga -c "cd /opt/tenseiga-athena && ./configure && make clean server"
+```
+
+A NAS CPU can take half an hour or more for the build. Leave out `make -j`: each parallel job
+needs 2 to 3 GB of memory for the map server.
+
+Then configure ([1.4](#14-configure)) and add the saga maps ([1.5](#15-twin-flames-maps)) as the
+`tenseiga` user: `su - tenseiga`, then `cd /opt/tenseiga-athena`.
+
+**Start it with the NAS.** Save this as `/etc/systemd/system/tenseiga-athena.service`:
+
+```ini
+[Unit]
+Description=Tenseiga Athena
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=tenseiga
+WorkingDirectory=/opt/tenseiga-athena
+ExecStart=/opt/tenseiga-athena/athena-start watch 10
+KillMode=control-group
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```
+systemctl daemon-reload
+systemctl enable --now tenseiga-athena
+systemctl status tenseiga-athena     # logs: /opt/tenseiga-athena/log/
+```
+
+`systemctl stop tenseiga-athena` stops all four servers; they save on the way out.
+
+**Give the NAS a fixed address.** `char_ip` and `map_ip` are the NAS's LAN address, so set a
+static one under **Network > Interfaces**, or reserve it on your router.
+
+**Firewall:** don't install ufw on OMV. OMV's own firewall (**Network > Firewall**) is off
+unless you've set it up. If you use it, add rules that accept TCP 6900, 6121, 5121 and 8888.
+These ports don't clash with OMV's web UI (80/443) or Portainer (9000/9443).
 
 ---
 
