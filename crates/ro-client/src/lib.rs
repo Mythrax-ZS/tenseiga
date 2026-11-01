@@ -43,7 +43,7 @@ fn android_main(android: AndroidApp) {
             return;
         }
     };
-    if let Err(e) = start(Some(event_loop)) {
+    if let Err(e) = app_start::start(Some(event_loop)) {
         tracing::error!("Tenseiga could not start: {e:#}");
     }
 }

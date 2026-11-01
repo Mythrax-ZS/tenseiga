@@ -11,7 +11,7 @@ include!("app.rs");
 
 fn main() {
     find_home();
-    if let Err(e) = run() {
+    if let Err(e) = app_start::run() {
         fatal(&format!("{e:#}"));
     }
 }
