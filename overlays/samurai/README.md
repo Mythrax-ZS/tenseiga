@@ -9,6 +9,13 @@ The game job is **Samurai** (4500); **Ember Ronin** remains the asset filename.
   with its hair colour) and headgear attach at the head anchor every frame
   carries. Idle and sitting have three frames each, the head straight, turned
   right and turned left, with the anchors following official heads' turns.
+- The body has official proportions: 69-71 px from the head anchor to the feet
+  facing us, feet 6-9 px below the ground origin (official male bodies: 65-74
+  and 4-12). Each anchor is the frame's neck less the official heads' offset
+  for that action and frame, so mirrored directions seat heads correctly too
+  (official heads anchor 17 px higher attacking west than east).
+- Arms raised past the head stay with the body, so an official head sits
+  between them in the overhead swings.
 - The Samurai's own tied-back hair, with its red ribbon, is hairstyle 43
   (`data/sprite/인간족/머리통/{남,여}/43_*`), cut from the original artwork. Its
   hair colours 0-8 (`data/palette/머리/머리43_*_N.pal`) take the official hair

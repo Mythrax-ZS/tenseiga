@@ -226,6 +226,27 @@ mod tests {
     }
 
     #[test]
+    fn the_body_stands_as_tall_as_official_bodies() {
+        // Official male bodies stand 65-74 px from the head anchor to the feet facing us, with
+        // the feet 4-12 px below the ground origin. Drawn for its own bigger head, the artwork
+        // stood 52 px tall with its feet on the origin: official heads sat on a child's body.
+        let path = overlay_path().expect("bundled Samurai overlay").join(BODY.replace('\\', "/"));
+        let spr = ro_formats::spr::Spr::parse(&std::fs::read(path.with_extension("spr")).unwrap()).unwrap();
+        let act = ro_formats::act::Act::parse(&std::fs::read(path.with_extension("act")).unwrap()).unwrap();
+        for d in 0..3 {
+            let frame = &act.actions[d].frames[0];
+            let layer = frame.layers[0];
+            let image = &spr.indexed[layer.sprite as usize];
+            let w = image.width as usize;
+            let last = (0..image.height as usize).rev().find(|y| image.pixels[y * w..][..w].iter().any(|&p| p != 0)).unwrap();
+            let feet = layer.y - image.height as i32 / 2 + last as i32 + 1;
+            let height = feet - frame.anchors[0][1];
+            assert!((65..=74).contains(&height), "direction {d}: {height} px from the head anchor to the feet");
+            assert!((4..=12).contains(&feet), "direction {d}: feet {feet} px below the ground origin");
+        }
+    }
+
+    #[test]
     fn starter_item_metadata_resolves_to_the_matching_katana_view() {
         let path = overlay_path().unwrap().join("System/samurai_iteminfo.lua");
         let entries = crate::customdata::iteminfo(&std::fs::read(&path).unwrap(), "samurai_iteminfo.lua", &|_| None);

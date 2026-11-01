@@ -13,20 +13,23 @@ stage splits each compiled frame in two:
 
 Steps (Python 3.12+, Pillow, NumPy), from the client repository:
 
-  py tools/samurai_assets/separate_head.py fit <compiled dir> --reference-head <dir>
-  py tools/samurai_assets/separate_head.py build <compiled dir> --output <dir>
+  py tools/samurai_assets/separate_head.py fit <native dir> --reference-head <dir>
+  py tools/samurai_assets/separate_head.py build <native dir> --body <sized dir> --output <dir>
   py tools/samurai_assets/separate_head.py install <build dir>
 
-Run it after compile.py and compile_weapons.py (whose outputs are in the overlay): `install`
-copies the body, hairstyle and palettes into overlays/samurai and pads the weapon ACTs there
-to the body's frame counts.
+<native dir> is compile.py's output with --native (the artwork's own size: the head is cut and
+hairstyle 43 drawn there); <sized dir> its output at the official size (build.json's body_scale
+and ground_drop), which the body is taken from, the native cut carried over. Run it after
+compile.py and compile_weapons.py (whose outputs are in the overlay): `install` copies the
+body, hairstyle and palettes into overlays/samurai and pads the weapon ACTs there to the
+body's frame counts.
 
 `fit` needs an official male head (2_남.spr/.act) and its hair palettes (머리2_남_1..8.pal)
 extracted from the game data into one folder; they are never committed. It places that
 head on each frame's drawn head and records the head anchors, head zones and the official
 hair-colour ramps in head_cut.json, which is committed and may be corrected by hand.
-`build` needs only the compiled body (compile.py's output) and head_cut.json. With
---reference-head it also draws review sheets with the official head on the new body.
+`build` needs only the two compiles and head_cut.json. With --reference-head it also draws
+review sheets with the official head on the new body.
 """
 from __future__ import annotations
 
@@ -218,6 +221,13 @@ class ReferenceHead:
         h, w = img.shape[:2]
         return img, (layer["x"] - w / 2 - anchor["x"], layer["y"] - h / 2 - anchor["y"])
 
+    def neck(self, action, frame):
+        """Where the head meets the neck (its bottom centre), from the anchor. Back views
+        anchor well above the neck, so this, not the anchor, is a point on the body."""
+        img, (ox, oy) = self.frame(action, frame)
+        ys, xs = np.nonzero(img[..., 3] >= 128)
+        return [round(float(ox + (xs.min() + xs.max() + 1) / 2), 1), round(float(oy + ys.max() + 1), 1)]
+
     def hair_ramps(self):
         """Per hair colour, the official hair shades from dark to light: the palette entries
         that differ between colours (skin and outline stay the same in every palette)."""
@@ -307,7 +317,7 @@ def fit(compiled, reference, cuts_path):
                 k = FRONT_DROP if a % 8 in (0, 1, 2) else BACK_DROP
                 entry["drop"] = [int(round(u[0] * k)), int(round(u[1] * k))]
             # Hand corrections survive refits.
-            for key in ("centre_window", "anchor_override", "cut", "keep", "note"):
+            for key in ("centre_window", "anchor_override", "cut", "keep", "keep_outline", "note"):
                 if key in kept:
                     entry[key] = kept[key]
             cuts["images"].append(entry)
@@ -321,8 +331,22 @@ def fit(compiled, reference, cuts_path):
         fr = head.actions[a]["frames"]
         base = fr[0]["anchors"][0]
         cuts["turn_offsets"][str(a)] = [[f["anchors"][0]["x"] - base["x"], f["anchors"][0]["y"] - base["y"]] for f in fr[1:3]]
+    cuts["neck_offsets"] = neck_offsets(head)
     cuts_path.write_text(json.dumps(cuts, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     return cuts
+
+
+def neck_offsets(head):
+    """Per action and frame, where an official head meets the neck, from its anchor. Bodies
+    anchor heads by these conventions, which are not mirror images of each other (attacking
+    west, heads anchor 17 px further above the neck than attacking east), so a mirrored body
+    frame needs its anchor worked out from the neck rather than mirrored."""
+    return {str(a): [head.neck(a, f) for f in range(len(head.actions[a]["frames"]))] for a in range(len(head.actions))}
+
+
+def neck_offset(cuts, action, frame):
+    offsets = cuts["neck_offsets"][str(action)]
+    return offsets[frame % len(offsets)]
 
 
 # How far a player's head is lowered from the drawn head's place, facing us and facing away
@@ -358,9 +382,10 @@ def neck_frame(entry, opaque):
 
 
 def cut_frame(img, entry, model):
-    """(head mask, fill mask, mirrored mask, mirrored colours) for one frame: the drawn head
-    and hair; the part of it that covered the coat (to fill) rather than hung free; and, facing
-    us or away, the shoulder it covered, taken from the other shoulder."""
+    """(head mask, fill mask, mirrored mask, mirrored colours, hairstyle mask) for one frame:
+    the drawn head and hair the body loses; the part of it that covered the coat (to fill)
+    rather than hung free; facing us or away, the shoulder it covered, taken from the other
+    shoulder; and the pixels hairstyle 43 is drawn from (the head mask before arms are kept)."""
     opaque, skin, red, gold, light = classes(img)
     h, w = opaque.shape
     ys, xs = np.mgrid[0:h, 0:w]
@@ -462,6 +487,12 @@ def cut_frame(img, entry, model):
     for rect in entry.get("keep", []):
         rx0, ry0, rx1, ry1 = rect
         head[max(ry0, 0):ry1, max(rx0, 0):rx1] = False
+    # Arms raised past the head and shoulders under the hair, each traced as the convex outline
+    # of a few points, stay with the body. Hairstyle 43 keeps its drawn pixels (`drawn`): on
+    # another job's body a hole there would show through its face.
+    drawn = head.copy()
+    for points in entry.get("keep_outline", []):
+        head &= ~inside_hull(convex_hull(np.array(points)), xs, ys)
     # Fill what lay over the coat: on the body's side of the neck, where coat shows on both
     # sides across the body (rows when upright, columns when lying) within a short gap. Hair
     # that hung free of the body has background on one side and goes.
@@ -527,7 +558,7 @@ def cut_frame(img, entry, model):
         neck = y1 - 2
         reach = NECK_HALF + SHOULDER_SLOPE * np.maximum(ys - neck, 0)
         fill &= (ys >= neck) & (np.abs(xs + 0.5 - c[0]) <= reach)
-    return head, fill, mirrored, mirror_rgb
+    return head, fill, mirrored, mirror_rgb, drawn
 
 
 def convex_hull(points):
@@ -664,11 +695,13 @@ def diffuse(img, known, todo):
 
 
 def split(images, cuts, model):
-    """(bodies, heads, head boxes): each frame without its head, and the head on its own."""
-    bodies, heads, boxes = [], [], []
+    """(bodies, heads, head boxes, cut masks): each frame without its head, the head on its
+    own, and per frame what was cut away and what was painted in its place."""
+    bodies, heads, boxes, masks = [], [], [], []
     for index, img in enumerate(images):
         entry = cuts["images"][index]
-        head, fill, mirrored, mirror_rgb = cut_frame(img, entry, model)
+        head, fill, mirrored, mirror_rgb, drawn = cut_frame(img, entry, model)
+        masks.append((head & ~(fill | mirrored), fill | mirrored))
         opaque = img[..., 3] >= 128
         body = img.copy()
         body[~opaque] = 0
@@ -678,9 +711,9 @@ def split(images, cuts, model):
         body = diffuse(body, (opaque & ~head) | mirrored, fill & ~mirrored)
         body[..., 3] = np.where(body[..., 3] >= 128, 255, 0)
         heads_img = np.zeros_like(img)
-        heads_img[head & opaque] = img[head & opaque]
-        heads_img[..., 3] = np.where(head & opaque, 255, 0)
-        ys, xs = np.nonzero(head & opaque)
+        heads_img[drawn & opaque] = img[drawn & opaque]
+        heads_img[..., 3] = np.where(drawn & opaque, 255, 0)
+        ys, xs = np.nonzero(drawn & opaque)
         if len(xs):
             hx0, hy0, hx1, hy1 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
         else:
@@ -694,7 +727,82 @@ def split(images, cuts, model):
         bodies.append(body)
         heads.append(crop)
         boxes.append((int(hx0), int(hy0)))
-    return bodies, heads, boxes
+    return bodies, heads, boxes, masks
+
+
+# ---------------------------------------------------------------- the official size
+
+
+def cell_grids(compiled):
+    """Per body image, how compile.py sampled it (from its report): the source cell's corner,
+    the source pixels per image pixel across and down, and where the image starts on that
+    sampling grid. Two compiles of one cell at different sizes meet in source coordinates."""
+    report = json.loads((Path(compiled) / "validation_report.json").read_text(encoding="utf-8"))
+    grids = {}
+    for cell in report["source_cells"]:
+        layer = cell["output_layer"]
+        if cell["mirror"] or layer["sprite_index"] in grids:
+            continue
+        kx, ky = cell.get("body_scale", [1, 1])
+        step = (report["downsample"] / (cell["source_scale"] * kx), report["downsample"] / (cell["source_scale"] * ky))
+        ox, oy = cell["sampled_origin"]
+        sx, sy = cell["output_shift"]
+        start = (layer["x"] - layer["width"] // 2 + ox - round(sx * kx),
+                 layer["y"] - layer["height"] // 2 + oy - round(sy * ky) - cell.get("ground_drop", 0))
+        grids[layer["sprite_index"]] = dict(corner=cell["rect"][:2], step=step, start=start)
+    return grids
+
+
+def to_source(grid, x, y):
+    """Image coordinates (pixel edges) to source coordinates."""
+    return (grid["corner"][0] + (x + grid["start"][0]) * grid["step"][0],
+            grid["corner"][1] + (y + grid["start"][1]) * grid["step"][1])
+
+
+def from_source(grid, sx, sy):
+    return ((sx - grid["corner"][0]) / grid["step"][0] - grid["start"][0],
+            (sy - grid["corner"][1]) / grid["step"][1] - grid["start"][1])
+
+
+def regrid(point, grid, to_grid):
+    """A point (or arrays of them) in one compile's image to the same spot in another's."""
+    return from_source(to_grid, *to_source(grid, *point))
+
+
+def rescale_body(big, big_grid, native, native_grid, removed, painted, model):
+    """The body at the official size: the larger sample's own pixels where the native cut kept
+    the body, the native body's paint where the cut filled the coat in, and nothing where the
+    head and hair were. The cut decisions (and their hand corrections) carry over unchanged."""
+    h, w = big.shape[:2]
+    nh, nw = native.shape[:2]
+    ys, xs = np.mgrid[0:h, 0:w]
+    nx, ny = (np.floor(v).astype(int) for v in regrid((xs + 0.5, ys + 0.5), big_grid, native_grid))
+    inside = (nx >= 0) & (nx < nw) & (ny >= 0) & (ny < nh)
+    cx, cy = nx.clip(0, nw - 1), ny.clip(0, nh - 1)
+    gone = inside & removed[cy, cx]
+    made = inside & painted[cy, cx]
+    out = big.copy()
+    out[..., 3] = np.where(out[..., 3] >= 128, 255, 0)
+    out[gone] = 0
+    out[made] = native[cy[made], cx[made]]
+    # The two samplings meet within part of a pixel, so the cut's edge can leave a fringe of the
+    # larger sample's hair: hair-coloured pixels along it go, and then any specks left alone.
+    opaque, skin, red, gold, light = classes(out)
+    plain = opaque & ~skin & ~red & ~gold & ~light & ~made
+    for _ in range(2):
+        fringe = plain & (neighbours(out[..., 3] == 0) > 0) & (neighbours(gone) > 0) & (model.likelihood(out) > HAIR_T)
+        out[fringe] = 0
+        gone |= fringe
+        plain &= ~fringe
+    body = out[..., 3] > 0
+    parts = components(body)
+    if parts:
+        main = max(parts, key=len)
+        for part in parts:
+            ys_, xs_ = np.array(part).T
+            if part is not main and len(part) < 10 and skin[ys_, xs_].mean() < 0.5:
+                out[ys_, xs_] = 0
+    return out
 
 
 # ---------------------------------------------------------------- palettes
@@ -833,62 +941,106 @@ def pal_bytes(palette):
 # ---------------------------------------------------------------- writing
 
 
-def body_anchor(layer, size, anchor):
+def actor_point(layer, size, point):
     """An image-space point in actor space, through a body layer (mirrored or not)."""
     w, h = size
-    ax, ay = anchor
-    dx = ax - w / 2
-    x = layer["x"] - dx if layer.get("mirror") else layer["x"] + dx
-    return int(round(x)), int(round(layer["y"] + ay - h / 2))
+    dx = point[0] - w / 2
+    return (layer["x"] - dx if layer.get("mirror") else layer["x"] + dx, layer["y"] + point[1] - h / 2)
 
 
-def build(compiled, out, reference=None):
+def body_anchor(layer, size, anchor):
+    x, y = actor_point(layer, size, anchor)
+    return int(round(x)), int(round(y))
+
+
+def build(compiled, out, reference=None, sized=None):
+    """`compiled`: compile.py's output at the artwork's own size (--native), where the head is
+    cut and hairstyle 43 drawn. `sized`: its output at the official size (body_scale), which
+    the body is then taken from; without it the body keeps the native size."""
     compiled, out = Path(compiled), Path(out)
     cuts = json.loads(CUTS.read_text(encoding="utf-8"))
     images, actions = load_body(compiled)
     uses = image_uses(actions)
     model = train_hair(images, uses, cuts)
-    bodies, heads, boxes = split(images, cuts, model)
+    bodies, heads, boxes, masks = split(images, cuts, model)
+    fitted = [anchor_of(entry) for entry in cuts["images"]]
+    # Where each image's head meets the neck: the anchor it was fitted with, plus the official
+    # head's offset to the neck in the frame it was fitted on.
+    necks = []
+    for i, (ax, ay) in enumerate(fitted):
+        a, f, _ = uses[i][0]
+        cx, cy = neck_offset(cuts, a, f)
+        necks.append((ax + cx, ay + cy))
+    body_images, body_acts, body_necks = bodies, actions, necks
+    if sized:
+        big, body_acts = load_body(sized)
+        grids, big_grids = cell_grids(compiled), cell_grids(sized)
+        pairs = {}
+        for na, sa in zip(actions, body_acts):
+            for nf, sf in zip(na["frames"], sa["frames"]):
+                n, s = nf["layers"][0]["sprite_index"], sf["layers"][0]["sprite_index"]
+                if pairs.setdefault(n, s) != s:
+                    raise ValueError(f"Image {n} was compiled as two images at the official size")
+        if len(actions) != len(body_acts) or sorted(pairs.values()) != list(range(len(big))):
+            raise ValueError("The two compiles do not share one frame layout")
+        body_images, body_necks = [None] * len(big), [None] * len(big)
+        for n, s in pairs.items():
+            body_images[s] = rescale_body(big[s], big_grids[s], bodies[n], grids[n], *masks[n], model)
+            # The neck grows with the body; the anchors keep their official offsets from it.
+            body_necks[s] = tuple(float(v) for v in regrid(necks[n], grids[n], big_grids[s]))
 
-    body_pal = build_palette(bodies, body_material, BODY_LAYOUT)
+    body_pal = build_palette(body_images, body_material, BODY_LAYOUT)
     head_pal = build_palette(heads, head_material, HEAD_LAYOUT)
-    body_idx = [index_image(b, body_pal, body_material, BODY_LAYOUT) for b in bodies]
+    body_idx = [index_image(b, body_pal, body_material, BODY_LAYOUT) for b in body_images]
     head_idx = [index_image(hd, head_pal, head_material, HEAD_LAYOUT) for hd in heads]
 
     def indexed(arrs):
         return [dict(width=a.shape[1], height=a.shape[0], sprite_type=0, pixels=a.tobytes()) for a in arrs]
 
+    def frame_anchors(acts, imgs, neck_of):
+        """Per action, each frame's head anchor in actor space: its neck less the official
+        head's offset to the neck in that action and frame (mirrored frames included). Idle
+        and sitting gain the head turned right and left (the anchor follows the turned head's)."""
+        table = []
+        for a, action in enumerate(acts):
+            row = []
+            for f, frame in enumerate(action["frames"]):
+                i = frame["layers"][0]["sprite_index"]
+                px, py = actor_point(frame["layers"][0], (imgs[i].shape[1], imgs[i].shape[0]), neck_of[i])
+                cx, cy = neck_offset(cuts, a, f)
+                row.append((int(round(px - cx)), int(round(py - cy))))
+            turns = cuts.get("turn_offsets", {}).get(str(a))
+            if turns and len(row) == 1:
+                row += [(row[0][0] + dx, row[0][1] + dy) for dx, dy in turns]
+            table.append(row)
+        return table
+
+    anchors = frame_anchors(body_acts, body_images, body_necks)
+    # Hairstyle 43 is placed against the native body's anchors. Drawn on any body a head keeps
+    # its place relative to the anchor, so it sits the same on the official-size one.
+    native_anchors = frame_anchors(actions, images, necks) if sized else anchors
+
     # Body ACT: indexed layers and a head anchor per frame.
     body_actions = []
-    anchors = []
-    for action in actions:
-        frames = []
-        frame_anchors = []
-        for frame in action["frames"]:
-            layers = [dict(l, sprite_type=0) for l in frame["layers"]]
-            i = frame["layers"][0]["sprite_index"]
-            size = (images[i].shape[1], images[i].shape[0])
-            anchor = body_anchor(frame["layers"][0], size, anchor_of(cuts["images"][i]))
-            frames.append(dict(layers=layers, anchors=[dict(x=anchor[0], y=anchor[1])]))
-            frame_anchors.append(anchor)
-        turns = cuts.get("turn_offsets", {}).get(str(len(body_actions)))
-        if turns and len(frames) == 1:
+    for a, action in enumerate(body_acts):
+        frames = [dict(layers=[dict(l, sprite_type=0) for l in frame["layers"]], anchors=[dict(x=x, y=y)])
+                  for frame, (x, y) in zip(action["frames"], anchors[a])]
+        while len(frames) < len(anchors[a]):
             # Idle and sitting: the same pose again with the head turned right and left.
-            for dx, dy in turns:
-                ax, ay = frame_anchors[0]
-                frames.append(dict(layers=frames[0]["layers"], anchors=[dict(x=ax + dx, y=ay + dy)]))
-                frame_anchors.append((ax + dx, ay + dy))
+            x, y = anchors[a][len(frames)]
+            frames.append(dict(layers=frames[0]["layers"], anchors=[dict(x=x, y=y)]))
         body_actions.append(dict(interval=action["interval"], frames=frames))
-        anchors.append(frame_anchors)
 
-    def head_layer(i, mirror, base_layer, at_anchor):
-        """The head image of body image i, placed so its anchor lands on `at_anchor`."""
+    def head_layer(i, mirror, base_layer, at_anchor=None):
+        """The head image of body image i where it was drawn, or moved so its fitted anchor
+        lands on `at_anchor`. The head frame's anchor says where that is on the body."""
         img = images[i]
         hx, hy = boxes[i]
         hh, hw = heads[i].shape[:2]
         centre = (hx + hw / 2, hy + hh / 2)
-        own = body_anchor(base_layer, (img.shape[1], img.shape[0]), anchor_of(cuts["images"][i]))
+        own = body_anchor(base_layer, (img.shape[1], img.shape[0]), fitted[i])
         at = body_anchor(base_layer, (img.shape[1], img.shape[0]), centre)
+        at_anchor = at_anchor or own
         return dict(sprite_index=i, sprite_type=0, width=hw, height=hh, mirror=mirror,
                     x=at[0] - own[0] + at_anchor[0], y=at[1] - own[1] + at_anchor[1])
 
@@ -898,17 +1050,19 @@ def build(compiled, out, reference=None):
         frames = []
         for f, frame in enumerate(action["frames"]):
             layer = frame["layers"][0]
-            anchor = anchors[a][f]
-            frames.append(dict(layers=[head_layer(layer["sprite_index"], layer.get("mirror", False), layer, anchor)],
+            anchor = native_anchors[a][f]
+            frames.append(dict(layers=[head_layer(layer["sprite_index"], layer.get("mirror", False), layer)],
                                anchors=[dict(x=anchor[0], y=anchor[1])]))
         if group in (0, 2):
             # Idle and sitting: frames 1 and 2 turn the head right and left, as on official
             # heads: the head drawn for the next direction round either way, on the neck
-            # (frame 0's anchor), its frame anchored with the body's turned frame.
+            # (frame 0's fitted anchor), its frame anchored with the body's turned frame.
+            layer = action["frames"][0]["layers"][0]
+            i = layer["sprite_index"]
+            neck = body_anchor(layer, (images[i].shape[1], images[i].shape[0]), fitted[i])
             for k, turn in enumerate(((d + 1) % 8, (d - 1) % 8), 1):
                 nb = actions[group * 8 + turn]["frames"][0]["layers"][0]
-                neck = anchors[a][0]
-                at = anchors[a][k] if k < len(anchors[a]) else neck
+                at = native_anchors[a][k] if k < len(native_anchors[a]) else neck
                 frames.append(dict(layers=[head_layer(nb["sprite_index"], nb.get("mirror", False), nb, neck)],
                                    anchors=[dict(x=at[0], y=at[1])]))
         head_actions.append(dict(interval=action["interval"], frames=frames))
@@ -930,35 +1084,54 @@ def build(compiled, out, reference=None):
             ramp = ramps.get(str(c))
             pal = hair_palette(head_pal, ramp) if ramp else head_pal
             (out / "palette" / "머리" / f"머리{HAIRSTYLE}_{sex}_{c}.pal").write_bytes(pal_bytes(pal))
-    review(out, images, bodies, heads, boxes, cuts, uses, body_pal, head_pal, reference)
+    review(out, images, actions, body_images, body_actions, heads, head_actions, reference)
     return dict(body_images=len(body_idx), head_images=len(head_idx))
 
 
-def review(out, images, bodies, heads, boxes, cuts, uses, body_pal, head_pal, reference):
-    """Per frame: the original; the new body alone; the body with the hairstyle (which
-    should match the original); the body with an official head, when one is given."""
+def review(out, images, actions, bodies, body_actions, heads, head_actions, reference):
+    """Per body image, on its ground line: the original; the new body alone; the body with the
+    hairstyle (which should match the original); the body with an official head, if given."""
     ref = ReferenceHead(reference) if reference else None
-    cols, cw, ch = 4 if ref else 3, 120, 128
+    cols, cw, ch = 4 if ref else 3, 120, 150
     per_row = 6
-    rows = math.ceil(len(images) / per_row)
-    sheet = Image.new("RGBA", (per_row * cols * cw // 1, rows * ch), (38, 48, 60, 255))
+    origin = (cw // 2, ch - 22)
+    first = {}
+    for a, action in enumerate(body_actions):
+        for f, frame in enumerate(action["frames"]):
+            layer = frame["layers"][0]
+            if not layer.get("mirror"):
+                first.setdefault(layer["sprite_index"], (a, f))
+    rows = math.ceil(len(bodies) / per_row)
+    sheet = Image.new("RGBA", (per_row * cols * cw, rows * ch), (38, 48, 60, 255))
     draw = ImageDraw.Draw(sheet)
-    for index, img in enumerate(images):
-        x = (index % per_row) * cols * cw
-        y = (index // per_row) * ch
-        bx, by = (cw - img.shape[1]) // 2, 14
-        sheet.alpha_composite(Image.fromarray(img), (x + bx, y + by))
-        sheet.alpha_composite(Image.fromarray(bodies[index]), (x + cw + bx, y + by))
-        sheet.alpha_composite(Image.fromarray(bodies[index]), (x + 2 * cw + bx, y + by))
-        hx, hy = boxes[index]
-        sheet.alpha_composite(Image.fromarray(heads[index]), (x + 2 * cw + bx + hx, y + by + hy))
-        if ref:
-            ax, ay = anchor_of(cuts["images"][index])
-            a, f, _ = uses[index][0]
-            himg, (ox, oy) = ref.frame(a, f)
-            sheet.alpha_composite(Image.fromarray(bodies[index]), (x + 3 * cw + bx, y + by))
-            sheet.alpha_composite(Image.fromarray(himg), (x + 3 * cw + bx + int(round(ax + ox)), y + by + int(round(ay + oy))))
-        draw.text((x + 2, y + 1), str(index), fill=(230, 230, 230, 255))
+
+    def put(img, layer, at, shift=(0, 0)):
+        tile = Image.fromarray(img)
+        if layer.get("mirror"):
+            tile = tile.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        sheet.alpha_composite(tile, (int(round(at[0] + layer["x"] + shift[0] - img.shape[1] / 2)),
+                                     int(round(at[1] + layer["y"] + shift[1] - img.shape[0] / 2))))
+
+    for index in range(len(bodies)):
+        a, f = first[index]
+        x, y = (index % per_row) * cols * cw, (index // per_row) * ch
+        frame = body_actions[a]["frames"][f]
+        anchor = frame["anchors"][0]
+        native = actions[a]["frames"][f]["layers"][0]
+        put(images[native["sprite_index"]], native, (x + origin[0], y + origin[1]))
+        for c in range(1, cols):
+            at = (x + c * cw + origin[0], y + origin[1])
+            draw.line((at[0] - 30, at[1], at[0] + 30, at[1]), fill=(82, 98, 114, 255))
+            put(bodies[index], frame["layers"][0], at)
+            if c == 2:
+                hf = head_actions[a]["frames"][f]
+                hl, ha = hf["layers"][0], hf["anchors"][0]
+                put(heads[hl["sprite_index"]], hl, at, (anchor["x"] - ha["x"], anchor["y"] - ha["y"]))
+            elif c == 3:
+                himg, (ox, oy) = ref.frame(a, f)
+                sheet.alpha_composite(Image.fromarray(himg), (int(round(at[0] + anchor["x"] + ox)),
+                                                              int(round(at[1] + anchor["y"] + oy))))
+        draw.text((x + 2, y + 1), f"{index} {DIRECTIONS[a % 8]} g{a // 8}", fill=(230, 230, 230, 255))
     sheet.save(out / "review_frames.png")
 
 
@@ -1038,6 +1211,7 @@ def main():
     f.add_argument("--review", type=Path)
     b = sub.add_parser("build")
     b.add_argument("compiled", type=Path)
+    b.add_argument("--body", type=Path, help="compile.py's output at the official size, for the body")
     b.add_argument("--output", type=Path, required=True)
     b.add_argument("--reference-head", type=Path)
     i = sub.add_parser("install")
@@ -1050,7 +1224,7 @@ def main():
             fit_review(args.compiled, args.reference_head, cuts, args.review)
         print(f"fitted {len(cuts['images'])} frames into {CUTS}")
     elif args.command == "build":
-        print(json.dumps(build(args.compiled, args.output, args.reference_head)))
+        print(json.dumps(build(args.compiled, args.output, args.reference_head, args.body)))
     else:
         print(json.dumps(install(args.built, args.overlay), ensure_ascii=False))
 

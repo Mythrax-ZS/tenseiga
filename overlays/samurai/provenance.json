@@ -18,13 +18,13 @@
   "weapon_included_in_body": false,
   "sex": "male",
   "art_status": "Body and starter blade artwork retain prior visual reviews. Current attack poses were reviewed in decoded before/after composites; current runtime validation is recorded separately. Three attack groups share one six-frame swing. The head is separate (player heads, headgear and hairstyle 43 attach at per-frame anchors). Female art is not supplied.",
-  "build_config_sha256": "0bb1abcabb4f538a61cffc4079ed51ed0d30fab9fde606d6d94c04aec4d81eb0",
+  "build_config_sha256": "897381a00ec482581739c587c88bfd2431540acf9ae25648754b0c001e954ddb",
   "body_images": 119,
   "actions": 104,
   "timeline_frames": 304,
   "body_atlas_size": [
     1024,
-    1126
+    1581
   ],
   "validation": {
     "strict_spr_act_validation": "Passed: 104 actions, 304 frames, matching body/weapon timelines.",
@@ -38,12 +38,12 @@
     "installed_starter_act_matches_rebuild": true
   },
   "sha256": {
-    "data/sprite/custom/samurai/ember_ronin.spr": "c5c3ea78995c90bdf4c820d2c6e252814d87313ab1c086dcf55e2686d5577aad",
-    "data/sprite/custom/samurai/ember_ronin.act": "534d734911b30e8ab7730d859795864fac8b5617463f2a8d5e36c58957758275",
+    "data/sprite/custom/samurai/ember_ronin.spr": "5d65e12bc7d46e346a0be2682f63893b7897a2b8e7321725cd36c3270e157b87",
+    "data/sprite/custom/samurai/ember_ronin.act": "7c826792bbb0a620bd4e424e9f60e74d794812638e507b9a5d7c4e8cf4044f20",
     "data/sprite/custom/samurai/katana.spr": "82bb15bdf204d4d5bfccbe0510a8e2b6212a13e7dcd4d9fd0adc57e0409b0079",
-    "data/sprite/custom/samurai/katana.act": "01bf5143a439b89519e95caef89e5740a24cdf3ef5fa00f2b75de32710f5dab1",
+    "data/sprite/custom/samurai/katana.act": "30da21035438e35f0b2e57a23518385632bb5afb5753e2d24f111c9c799bead0",
     "data/sprite/custom/samurai/katana_offhand.spr": "82bb15bdf204d4d5bfccbe0510a8e2b6212a13e7dcd4d9fd0adc57e0409b0079",
-    "data/sprite/custom/samurai/katana_offhand.act": "9bba09e6370c8797e2f4689878e6eeeeb5ec4273fc96bab5f731631204ad0a70"
+    "data/sprite/custom/samurai/katana_offhand.act": "5f6390ad553fb0d627a5d0be210da9acf42a98e77e91e12b91b0d32803147e2f"
   },
   "selected_reference_sha256": "e28a3499c25bb932e968ab6a9535898dff4f2bbb328ee1526558f9f03dd496ce",
   "prior_revision_validation": {
@@ -93,5 +93,6 @@
     "palettes": "data/palette/머리/머리43_{sex}_N.pal",
     "origin": "The original artwork's drawn head and ponytail, cut out by tools/samurai_assets/separate_head.py; hair colours take the shades of the official hair palettes."
   },
-  "body_dyes": "data/palette/몸/samurai_남_1..7.pal, generated from the body's indexed palette"
+  "body_dyes": "data/palette/몸/samurai_남_1..7.pal, generated from the body's indexed palette",
+  "body_proportions": "Drawn for its own bigger head, the artwork stood 52 px from neck to feet with its feet on the ground origin; official male bodies stand 66-71 px and plant their feet 5-10 px below it. build.json's body_scale samples the body 1.15x across and 1.3x down from the source sheets and ground_drop lowers each direction to the official bodies' median feet line; weapon grips follow and blades keep their size. The head is still cut at the artwork's own size (hairstyle 43 is unchanged) and the cut carried to the larger body. Head anchors are the neck less the official heads' per-frame offsets (artwork/head_cut.json neck_offsets), so mirrored frames seat official heads as their own direction does."
 }

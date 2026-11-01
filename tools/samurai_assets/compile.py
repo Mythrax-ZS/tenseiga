@@ -38,11 +38,13 @@ def raw_image(image):
     return dict(width=image.width, height=image.height, sprite_type=1, pixels=image.tobytes())
 
 
-def sampled_cell(image, rect, origin, factor, shift=(0, 0), source_scale=1):
+def sampled_cell(image, rect, origin, factor, shift=(0, 0), source_scale=1, body_scale=(1, 1), drop=0):
     """Sample on the fixed cell grid, then trim; maintain the authored origin.
 
     Sampling before the silhouette crop keeps the same pixel phase for every
-    frame. A uniform optional sheet calibration is applied in this same sample.
+    frame. A uniform optional sheet calibration is applied in this same sample,
+    and so is the package's body calibration (`body_scale` across and down,
+    then `drop` pixels lower on the ground origin).
     """
     left, top, right, bottom = rect
     if not (0 <= left < right <= image.width and 0 <= top < bottom <= image.height):
@@ -60,9 +62,9 @@ def sampled_cell(image, rect, origin, factor, shift=(0, 0), source_scale=1):
          visible_bounds[2] == cell.width, visible_bounds[3] == cell.height)) if hit]
     if not math.isfinite(source_scale) or source_scale <= 0:
         raise ValueError("source_scale must be finite and positive")
-    ratio = factor / source_scale
-    size = tuple(math.ceil(v / ratio) for v in cell.size)
-    sampled = cell.transform(size, Image.Transform.AFFINE, (ratio, 0, 0, 0, ratio, 0),
+    rx, ry = (factor / (source_scale * k) for k in body_scale)
+    size = (math.ceil(cell.width / rx), math.ceil(cell.height / ry))
+    sampled = cell.transform(size, Image.Transform.AFFINE, (rx, 0, 0, 0, ry, 0),
                              Image.Resampling.NEAREST, fillcolor=(0, 0, 0, 0))
     box = sampled.getchannel("A").getbbox()
     if box is None:
@@ -70,13 +72,14 @@ def sampled_cell(image, rect, origin, factor, shift=(0, 0), source_scale=1):
     trimmed = sampled.crop(box)
     even = Image.new("RGBA", (trimmed.width + trimmed.width % 2, trimmed.height + trimmed.height % 2))
     even.paste(trimmed, (0, 0))
-    ox, oy = (round(v / ratio) for v in origin)
-    x = box[0] + even.width // 2 - ox + shift[0]
-    y = box[1] + even.height // 2 - oy + shift[1]
+    ox, oy = round(origin[0] / rx), round(origin[1] / ry)
+    x = box[0] + even.width // 2 - ox + round(shift[0] * body_scale[0])
+    y = box[1] + even.height // 2 - oy + round(shift[1] * body_scale[1]) + drop
     if any(not isinstance(v, int) for v in (x, y)):
         raise ValueError("Output offsets must be whole pixels")
     return even, x, y, {"rect": list(rect), "origin": list(origin), "sampled_origin": [ox, oy],
                         "output_shift": list(shift), "source_scale": source_scale,
+                        "body_scale": list(body_scale), "ground_drop": drop,
                         "sample_divisor": factor, "source_edge_contacts": contacts,
                         "source_visible_edge_contacts": visible_contacts,
                         "source_visible_bbox": list(visible_bounds) if visible_bounds else None}
@@ -131,7 +134,31 @@ def sampled_weapon_png(path, spec):
                           Image.Resampling.NEAREST, fillcolor=(0, 0, 0, 0))
 
 
-def compile_package(config_path, destination):
+def body_calibration(config, native=False):
+    """((scale across, scale down), {direction: ground drop}): the body against official
+    bodies. `ground_drop` is pixels or, per unmirrored direction, a map of them.
+    `native` is the artwork's own size, where separate_head.py cuts the head."""
+    if native:
+        return (1, 1), {d: 0 for d in DIRECTIONS}
+    scale, drop = config.get("body_scale", [1, 1]), config.get("ground_drop", 0)
+    if (not isinstance(scale, list) or len(scale) != 2
+            or any(not isinstance(k, (int, float)) or not math.isfinite(k) or k <= 0 for k in scale)):
+        raise ValueError("body_scale must be two positive numbers")
+    drops = drop if isinstance(drop, dict) else {d: drop for d in DIRECTIONS}
+    if set(drops) - set(DIRECTIONS) or any(type(v) is not int for v in drops.values()):
+        raise ValueError("ground_drop must be whole pixels, or a map of them by direction")
+    return tuple(scale), {d: drops.get(d, 0) for d in DIRECTIONS}
+
+
+def calibrated_pose(pose, scale, drop):
+    """A weapon grip moves with the hand it sits in; the blade keeps its size."""
+    if pose is None:
+        return None
+    gx, gy = pose["grip"]
+    return dict(pose, grip=[gx * scale[0], gy * scale[1] + drop])
+
+
+def compile_package(config_path, destination, native=False):
     config_path, destination = Path(config_path).resolve(), Path(destination).resolve()
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("schema_version") != 1:
@@ -139,6 +166,7 @@ def compile_package(config_path, destination):
     divisor = config["downsample"]
     if not isinstance(divisor, int) or divisor < 1:
         raise ValueError("downsample must be a positive integer")
+    body_scale, drops = body_calibration(config, native)
     groups = {group["index"]: group for group in config["groups"]}
     if len(groups) != 13 or set(groups) != set(range(13)) or len(config["groups"]) != 13:
         raise ValueError("Provide each group 0 through 12 exactly once")
@@ -155,6 +183,8 @@ def compile_package(config_path, destination):
     for direction, source in mirrors.items():
         if direction not in DIRECTIONS or source not in DIRECTIONS or source in mirrors:
             raise ValueError("Mirrors must map one known direction to an unmirrored known direction")
+    # A mirrored direction is its source's art, so it stands on the source's ground line.
+    drops = {d: drops[mirrors.get(d, d)] for d in DIRECTIONS}
     weapon_config = config.get("weapon")
     if weapon_config:
         source_types = [key for key in ("spr", "png") if key in weapon_config]
@@ -194,12 +224,15 @@ def compile_package(config_path, destination):
                 raise ValueError(f"Weapon frame count differs in group {group_index} direction {direction}")
             if any(pose is not None for pose in poses + offhand_poses) and not weapon_config:
                 raise ValueError("Weapon poses require a weapon SPR and source grip")
+            drop = drops[source_direction]
+            poses = [calibrated_pose(pose, body_scale, drop) for pose in poses]
+            offhand_poses = [calibrated_pose(pose, body_scale, drop) for pose in offhand_poses]
             for frame_index, ref in enumerate(specs):
                 sheet_name, row, column = ref["sheet"], ref["row"], ref["column"]
                 key = f"{sheet_name}:{row}:{column}"
                 cell_spec = dict(config.get("cell_overrides", {}).get(key, {}))
                 cell_spec.update(ref)
-                source_key = json.dumps(cell_spec, sort_keys=True)
+                source_key = json.dumps(cell_spec, sort_keys=True) + (f" drop {drop}" if drop else "")
                 if source_key not in source_frames:
                     sheet_spec = config["sheets"][sheet_name]
                     if "rect" in cell_spec:
@@ -213,7 +246,8 @@ def compile_package(config_path, destination):
                         rect = [mx + column * width, my + row * height, mx + (column + 1) * width, my + (row + 1) * height]
                     origin = cell_spec.get("origin", sheet_spec["origin"])
                     image, x, y, info = sampled_cell(sheets[sheet_name], rect, origin, divisor,
-                                                   cell_spec.get("shift", [0, 0]), sheet_spec.get("source_scale", 1))
+                                                   cell_spec.get("shift", [0, 0]), sheet_spec.get("source_scale", 1),
+                                                   body_scale, drop)
                     digest = hashlib.sha256(str(image.size).encode() + image.tobytes()).hexdigest()
                     if digest not in image_ids:
                         image_ids[digest] = len(body_images)
@@ -223,7 +257,8 @@ def compile_package(config_path, destination):
                     source_frames[source_key] = (layer, info)
                 layer, info = source_frames[source_key]
                 layer = reflect_layer(layer) if is_mirrored else dict(layer)
-                body_frames.append(dict(layers=[layer], anchors=[dict(x=0, y=config.get("head_anchor_y", -40))]))
+                anchor_y = round(config.get("head_anchor_y", -40) * body_scale[1]) + drop
+                body_frames.append(dict(layers=[layer], anchors=[dict(x=0, y=anchor_y)]))
                 grip = weapon_config["source_grip"] if weapon_config else None
                 weapon_frames.append(weapon_frame(poses[frame_index], weapon_image, grip, is_mirrored))
                 offhand_frames.append(weapon_frame(offhand_poses[frame_index], weapon_image, grip, is_mirrored))
@@ -248,7 +283,7 @@ def compile_package(config_path, destination):
         write_act(destination / f"{offhand_name}.act", offhand_actions)
     report = validate_package(destination, body_name, weapon_name, offhand_name)
     report.update(source_sha256=source_hashes, config_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
-                  downsample=divisor, source_cells=diagnostics,
+                  downsample=divisor, body_scale=list(body_scale), ground_drop=drops, source_cells=diagnostics,
                   visual_status="Requires human review of all action directions; structural checks do not certify animation quality.")
     save_json(destination / "validation_report.json", report)
     save_json(destination / "build_config.json", config)
@@ -374,8 +409,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--native", action="store_true",
+                        help="the artwork's own size, ignoring body_scale and ground_drop (for separate_head.py)")
     args = parser.parse_args()
-    report = compile_package(args.config, args.output)
+    report = compile_package(args.config, args.output, args.native)
     print(json.dumps({key: value for key, value in report.items() if key != "source_cells"}, indent=2))
 
 

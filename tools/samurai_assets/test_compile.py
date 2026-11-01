@@ -137,6 +137,32 @@ class CompilerTest(unittest.TestCase):
         with self.assertRaisesRegex(FormatError, "katana_offhand timeline mismatch"):
             validate_package(output, "ember_ronin", "katana", "katana_offhand")
 
+    def test_body_calibration_scales_art_origin_and_grip_and_lowers_each_direction(self):
+        config = self.config()
+        config["body_scale"] = [2, 3]
+        config["ground_drop"] = {"S": 5, "SW": 4, "W": 3, "NW": 2, "N": 1}
+        path = self.root / "build.json"
+        path.write_text(json.dumps(config))
+        compile_package(path, self.root / "native", native=True)
+        compile_package(path, self.root / "sized")
+        native, sized = (read_act(self.root / name / "ember_ronin.act")["actions"] for name in ("native", "sized"))
+        nspr, sspr = (read_spr(self.root / name / "ember_ronin.spr")["images"] for name in ("native", "sized"))
+        def corner(layer, images):
+            """Actor position of the opaque source pixel's top-left (it is drawn unmirrored)."""
+            image = images[layer["sprite_index"]]
+            i = image["pixels"][3::4].index(255)
+            return (layer["x"] - image["width"] // 2 + i % image["width"], layer["y"] - image["height"] // 2 + i // image["width"])
+        for action, drop in ((0, 5), (8, 5), (2, 3), (3, 2), (4, 1)):
+            n, s = native[action]["frames"][0]["layers"][0], sized[action]["frames"][0]["layers"][0]
+            # Twice as wide and three times as tall about the same origin, `drop` lower.
+            (nx, ny), (sx, sy) = corner(n, nspr), corner(s, sspr)
+            self.assertEqual((sx, sy), (2 * nx, 3 * ny + drop))
+        weapon = read_act(self.root / "sized" / "katana.act")["actions"][40]["frames"][0]["layers"][0]
+        plain = read_act(self.root / "native" / "katana.act")["actions"][40]["frames"][0]["layers"][0]
+        # The grip (-2, -4) moves to (-4, -12 + 5); the blade keeps its size.
+        self.assertEqual((weapon["x"] - plain["x"], weapon["y"] - plain["y"]), (-2, -3))
+        self.assertEqual(read_spr(self.root / "sized" / "katana.spr")["images"], read_spr(self.root / "native" / "katana.spr")["images"])
+
     def test_empty_cells_and_missing_groups_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "Empty source cell"):
             sampled_cell(Image.new("RGBA", (8, 8)), [0, 0, 8, 8], [4, 7], 1)
