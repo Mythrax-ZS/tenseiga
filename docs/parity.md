@@ -130,7 +130,8 @@ headers and clif.cpp, then compared with what this client reads and sends.
 - [~] Super Novice: /doridori (CZ_DORIDORI, the SP regen bonus; the head doesn't shake) and the guardian angel prayer said line by line in chat (msgstringtable 790-793, CZ_CHOPOKGI). Not tested in game (no Super Novice)
 - [ ] Pet emotions (CZ_PET_ACT): when the original sends them is unknown
 - [~] /changedress and /nocosplay (CZ_REQ_CHANGEDRESS), stop attacking with the controller's East button (CZ_CANCEL_LOCKON), /resetskill (CZ_RESET_SKILL, which rAthena runs as @resetskill, so GMs only): not tested in game
-- [ ] Facing changes (CZ_CHANGE_DIRECTION): the original's control for turning in place is unknown
+- [x] Turning in place (CZ_CHANGE_DIRECTION): Shift+click the ground (or click while sitting), and talking to an NPC turns toward it. One step round turns only the head, a second click the same way brings the body round, wider turns move the body to one step short with the head looking the rest (roBrowserLegacy's lookTo). Others' head turns come from ZC_CHANGE_DIRECTION and the unit packets' headDir; standing and sitting draw the matching head-turn frame
+- [x] Ground cursor: texture\grid.tga's corner marks on the walkable cell under the mouse, mint green and half opaque (measured from the original)
 - [~] Storage: Shift+right-click takes an item into the inventory's favourites tab (CZ_MOVE_ITEM_TO_PERSONAL, clients from 2025-01-22): not tested in game
 - [ ] Private airship (CZ_PRIVATE_AIRSHIP_REQUEST): needs a map picker; nothing on the server opens it
 - [x] GM tools: /b /nb /lb /nlb /hide /mm /recall /shift /item /monster /rc /check /killall /resetstate /resetcooltime /changemaptype, and GM right-click actions (config `gm`)

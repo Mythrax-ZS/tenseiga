@@ -20,6 +20,28 @@ pub fn dir_from_step(dx: i32, dy: i32) -> usize {
     }
 }
 
+/// Turning in place to look toward `want` (Shift+click, talking to an NPC): the new (head,
+/// body), head 0 straight, 1 turned right, 2 left. One step round turns only the head, and
+/// a second look the same way brings the body round; two or three steps turn the body to one
+/// step short with the head looking the rest; straight behind turns the body all the way
+/// (or keeps a turned head turned). roBrowserLegacy's Entity.lookTo.
+pub fn turn_toward(body: usize, head: u8, want: usize) -> (u8, usize) {
+    // Body placings that leave the head turned left (2) or right (1) onto `want`.
+    let (left, right) = ((want + 1) % 8, (want + 7) % 8);
+    match (body + 8 - want) % 8 {
+        0 => (0, body),
+        1 if head == 2 => (0, want),
+        7 if head == 1 => (0, want),
+        1..=3 => (2, left),
+        5..=7 => (1, right),
+        _ => match head {
+            2 => (2, left),
+            1 => (1, right),
+            _ => (0, want),
+        },
+    }
+}
+
 /// An actor walking cell to cell. Positions are fractional cells.
 #[derive(Debug, Clone)]
 pub struct Walker {
@@ -154,5 +176,22 @@ mod tests {
         assert_eq!(w.update(100.0), (1.5, 0.0));
         assert_eq!(w.update(100.0), (2.0, 0.0));
         assert!(!w.is_walking());
+    }
+
+    #[test]
+    fn turning_looks_then_turns() {
+        // Facing south (0): south-west (1) is a look to the right, south-east (7) to the left.
+        assert_eq!(turn_toward(0, 0, 1), (1, 0));
+        assert_eq!(turn_toward(0, 0, 7), (2, 0));
+        // Looking right already, the same look again brings the body round.
+        assert_eq!(turn_toward(0, 1, 1), (0, 1));
+        // West (two steps): the body goes one step, the head the other.
+        assert_eq!(turn_toward(0, 0, 2), (1, 1));
+        assert_eq!(turn_toward(0, 0, 6), (2, 7));
+        // Straight behind: a full turn, unless the head is turned.
+        assert_eq!(turn_toward(0, 0, 4), (0, 4));
+        assert_eq!(turn_toward(0, 2, 4), (2, 5));
+        // Looking where the body faces straightens the head.
+        assert_eq!(turn_toward(3, 1, 3), (0, 3));
     }
 }

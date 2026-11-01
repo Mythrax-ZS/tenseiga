@@ -95,6 +95,10 @@ pub enum Shape {
     /// Crescent Gale: a crescent of mortal flame flying from `pos` along `travel`, then
     /// breaking up; `solid` as for `Tenseiga`.
     Crescent { travel: Vec3, solid: bool },
+    /// The cell under the mouse: texture\grid.tga's corner marks in the effect's colour, half
+    /// opaque. `pos` is the cell's low corner (y 0) and `heights` its corners' ground heights
+    /// (low x low z, then round: high x, both high, high z).
+    Cell { heights: [f32; 4] },
 }
 
 /// The pieces the Mortal Flame skills' effects are built from. Streaks and rings use
@@ -216,7 +220,7 @@ pub enum AuraLayer {
 impl ProcFx {
     /// Drawn alpha-blended (darkening) rather than added.
     pub fn shades(&self) -> bool {
-        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. })
+        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. })
     }
 }
 
@@ -683,6 +687,12 @@ impl ProcFx {
                 let corner = |x: f32, z: f32| self.pos + Vec3::new(x * c - z * s, 0.15, x * s + z * c);
                 let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color };
                 let (a, b, cc, d) = (v(corner(-r, -r), 0.0, 0.0), v(corner(r, -r), 1.0, 0.0), v(corner(r, r), 1.0, 1.0), v(corner(-r, r), 0.0, 1.0));
+                out.extend([a, b, cc, a, cc, d]);
+            }
+            Shape::Cell { heights } => {
+                let color = [self.color[0], self.color[1], self.color[2], 0.5];
+                let v = |i: usize, x: f32, z: f32| Vertex { pos: (self.pos + Vec3::new(x * CELL, heights[i] + 0.2, z * CELL)).into(), uv: [x, z], color };
+                let (a, b, cc, d) = (v(0, 0.0, 0.0), v(1, 1.0, 0.0), v(2, 1.0, 1.0), v(3, 0.0, 1.0));
                 out.extend([a, b, cc, a, cc, d]);
             }
             Shape::Area { size } => {
