@@ -175,26 +175,43 @@ transition, source clipping flags, and the live client before release.
 
 The generated frames draw the head and ponytail into the body. `separate_head.py`
 turns the compiled body into an official-style one, after `compile.py` and
-`compile_weapons.py`:
+`compile_weapons.py`. The head is cut at the artwork's own size (`--native`), and
+the body is taken from a second compile at the official size:
 
 ```powershell
+py tools/samurai_assets/compile.py tools/samurai_assets/artwork/build.json --output target/samurai-review --native
+py tools/samurai_assets/compile.py tools/samurai_assets/artwork/build.json --output target/samurai-sized
 py tools/samurai_assets/separate_head.py fit target/samurai-review --reference-head <folder>
-py tools/samurai_assets/separate_head.py build target/samurai-review --output target/samurai-head
+py tools/samurai_assets/separate_head.py build target/samurai-review --body target/samurai-sized --output target/samurai-head
 py tools/samurai_assets/separate_head.py install target/samurai-head
 ```
 
+Copy the sized compile's weapon ACTs (and `compile_weapons.py`'s, which also
+follow `body_scale`) into the overlay before `install`, which pads them.
+
+Drawn for its own bigger head, the artwork stood 52 px from neck to feet with its
+feet on the ground origin; official male bodies stand 66-71 px with their feet
+5-10 px below it. `body_scale` in `build.json` samples the body 1.15x across and
+1.3x down, and `ground_drop` lowers each direction to the official bodies' median
+feet line. Weapon grips follow; the blades keep their size.
+
 `fit` lays an official male head over each frame's drawn head to find the head
 anchor (then lowers it onto the shoulders, as official bodies seat their heads),
-and records the official hair-colour shades and head-turn offsets. Its folder
-holds `2_남.spr/.act` and `머리2_남_1..8.pal` extracted from the game data; they
-are never committed. The result, with any hand corrections, is
+and records the official hair-colour shades, head-turn offsets and, per action and
+frame, where official heads meet the neck (`neck_offsets`). Its folder holds
+`2_남.spr/.act` and `머리2_남_1..8.pal` extracted from the game data; they are
+never committed. The result, with any hand corrections, is
 `artwork/head_cut.json`: per frame `centre_window` bounds the fit, `cut` and
-`keep` rectangles add to or protect from the cut, and `anchor_override` replaces
-the anchor. `build` cuts the head and hair out, fills the coat they covered,
-writes an indexed body with one palette range per material, the clothes dyes,
-hairstyle 43 and its hair colours, and `review_frames.png` (original, body,
-body with hairstyle 43, body with the reference head). `install` copies it into
-`overlays/samurai` and pads the weapon timelines to the body's frame counts.
+`keep` rectangles add to or protect from the cut, `keep_outline` protects convex
+outlines of points (arms raised past the head, shoulders under the hair), and
+`anchor_override` replaces the anchor. `build` cuts the head and hair out, fills
+the coat they covered, carries that cut to the official-size body, sets each
+frame's anchor to its neck less the official offset (so mirrored frames seat
+heads as their own direction does), and writes an indexed body with one palette
+range per material, the clothes dyes, hairstyle 43 and its hair colours, and
+`review_frames.png` (original, body, body with hairstyle 43, body with the
+reference head). `install` copies it into `overlays/samurai` and pads the weapon
+timelines to the body's frame counts.
 
 ## Format implementation provenance
 
