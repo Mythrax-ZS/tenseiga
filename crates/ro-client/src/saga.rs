@@ -65,6 +65,39 @@ const LOOKS: &[(i16, Look)] = &[
     (31916, Look { base: "randgris", hue: 260.0, lightness: 0.45, tint: [0.75, 0.6, 1.0], scale: 1.2, aura: Some(AuraStyle::Yami), ..PLAIN }),
     // The Weaver unmasked: light and shadow fused, crimson gold.
     (31917, Look { base: "randgris", lightness: 0.9, tint: [1.0, 0.75, 0.6], scale: 1.35, aura: Some(AuraStyle::Amaterasu), ..PLAIN }),
+    // The memorial dungeons' monsters. NPC sprites (4_*, 1_*) stand in for the objects and the
+    // villagers; they never move, so their single pose is enough.
+    // Torch Captain Gonza: a wanderer scorched red, lit by his own torch.
+    (31918, Look { base: "wander_man", hue: -10.0, saturation: 1.3, lightness: 0.85, tint: [1.0, 0.7, 0.55], scale: 1.25, ..PLAIN }),
+    // Iron Retainer: Kurogane's samurai in dull black iron.
+    (31919, Look { base: "incantation_samurai", saturation: 0.4, lightness: 0.6, tint: [0.85, 0.85, 0.9], scale: 0.95, ..PLAIN }),
+    // Iron Banner: Kurogane's black war banner.
+    (31920, Look { base: "1_flag_eagle", saturation: 0.3, lightness: 0.45, tint: [1.0, 0.85, 0.7], scale: 1.2, ..PLAIN }),
+    // Banner Bearer: a wanderer in Kurogane's bronze.
+    (31921, Look { base: "wander_man", hue: 20.0, lightness: 0.9, tint: [1.0, 0.9, 0.7], ..PLAIN }),
+    // Cowering villagers, caught between the armies of the Crimson Fields.
+    (31922, Look { base: "4_m_jpn2", ..PLAIN }),
+    (31933, Look { base: "4_f_jpn2", ..PLAIN }),
+    // Sarugami Spirit: a monkey spirit of temple gold.
+    (31923, Look { base: "yoyo", hue: 25.0, saturation: 1.2, lightness: 1.15, tint: [1.0, 0.95, 0.75], ..PLAIN }),
+    // Seal Lantern (and the Sun Shard, and the Pillar of Light): a rune stone burning gold.
+    (31924, Look { base: "4_runestone", hue: 225.0, saturation: 1.3, lightness: 1.1, tint: [1.0, 0.9, 0.6], ..PLAIN }),
+    // Acolyte of the Veil: a pale doll-priestess, like her mistress.
+    (31925, Look { base: "miyabi_ningyo", saturation: 0.4, lightness: 1.35, tint: [1.0, 0.95, 0.85], scale: 0.9, ..PLAIN }),
+    // Masked Guard: a shinobi of the Palace of Masks, in violet.
+    (31926, Look { base: "shinobi", hue: 260.0, saturation: 1.2, lightness: 0.8, tint: [0.85, 0.75, 1.0], ..PLAIN }),
+    // Masked Double: Kurozane's own shape, a shade paler.
+    (31927, Look { base: "incantation_samurai", hue: 270.0, saturation: 1.2, tint: [0.9, 0.8, 1.0], scale: 1.05, ..PLAIN }),
+    // Chain Anchor: a seal stone gone black and red, where Yami's chains are fixed.
+    (31928, Look { base: "4_4job_sealstone", saturation: 0.6, lightness: 0.5, tint: [1.0, 0.55, 0.45], aura: Some(AuraStyle::Yami), ..PLAIN }),
+    // Ash Wraith: a wraith of ash and embers.
+    (31929, Look { base: "wraith", saturation: 0.3, lightness: 0.6, tint: [1.0, 0.7, 0.55], ..PLAIN }),
+    // Echo: a companion's shape that the goddess wears, pale and hollow.
+    (31930, Look { base: "4_ghost_stand", lightness: 1.15, tint: [1.0, 0.95, 0.8], scale: 1.1, aura: Some(AuraStyle::Amaterasu), ..PLAIN }),
+    // Moon Shard (and the Pillar of Shadow): a rune stone of moonlit violet.
+    (31931, Look { base: "4_runestone", hue: 80.0, lightness: 0.85, tint: [0.8, 0.7, 1.0], ..PLAIN }),
+    // Sarugami Judge: a great golden monkey spirit.
+    (31932, Look { base: "yoyo", hue: 25.0, saturation: 1.3, lightness: 1.2, tint: [1.0, 0.9, 0.6], scale: 1.9, aura: Some(AuraStyle::Amaterasu), ..PLAIN }),
 ];
 
 impl Look {

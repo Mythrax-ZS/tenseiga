@@ -4,10 +4,18 @@ QuestInfoList = {}
 QuestInfoList[900101] = {
     Title = "Twin Flames I: Ashes of Honor",
     Summary = "Seek Oharu in Amatsu, and pray at the forgotten shrine.",
-    Description = { "The house you served in Amatsu has been burned by raiders.", "Old Oharu, the only survivor, waits by the town guides.", "She says to pray at the forgotten shrine in the fields north of town." },
+    Description = { "Kagemori, the village above Amatsu where the house you served stood, has been burned by raiders.", "Old Oharu, the only survivor, waits by the town guides.", "She says to pray at the forgotten shrine in the fields north of town." },
     NpcNavi = "amatsu",
     NpcPosX = 192,
     NpcPosY = 94,
+}
+QuestInfoList[900103] = {
+    Title = "Twin Flames I: Kagemori Burning",
+    Summary = "Walk through the night Kagemori burned.",
+    Description = { "A hooded kami at the forgotten shrine answered your prayer with a vision of that night.", "Free the villagers trapped in the flames, find Oharu and the lord, and face the Torch Captain.", "Speak to the kami again to go back into the vision." },
+    NpcNavi = "ama_in01",
+    NpcPosX = 175,
+    NpcPosY = 176,
 }
 QuestInfoList[900102] = {
     Title = "Twin Flames I: Ash on the Wind",
@@ -42,9 +50,9 @@ QuestInfoList[900121] = {
     NpcPosY = 163,
 }
 QuestInfoList[900122] = {
-    Title = "Twin Flames III: Warlord Kurogane",
-    Summary = "Defeat Warlord Kurogane in the Battle Fortress.",
-    Description = { "Warlord Kurogane paid the raiders.", "Strike his war banner on the second floor of the Amatsu dungeon, with Muramasa in hand.", "Then return to Tetsuya." },
+    Title = "Twin Flames III: Kurogane's Fortress",
+    Summary = "Storm Warlord Kurogane's fortress.",
+    Description = { "Warlord Kurogane paid the raiders.", "Go through the iron gate on the second floor of the Amatsu dungeon, with Muramasa in hand. Tetsuya waits on the walls.", "Cut down his three iron banners, face him in his hall, then return to Tetsuya." },
     NpcNavi = "ama_dun02",
     NpcPosX = 45,
     NpcPosY = 50,

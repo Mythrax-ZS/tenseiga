@@ -199,7 +199,7 @@ mod tests {
     fn saga_quests_know_where_to_go() {
         let src = include_bytes!("../../../overlays/samurai/System/samurai_questinfo.lua");
         let quests = super::questinfo(src, "samurai_questinfo.lua");
-        assert_eq!(quests.len(), 23);
+        assert_eq!(quests.len(), 24);
         assert!(quests.iter().all(|(_, q)| q.npc.is_some()));
         let raider = quests.iter().find(|(id, _)| *id == 900112).map(|(_, q)| q.npc.clone());
         assert_eq!(raider, Some(Some(("amatsu".to_string(), 187, 158))));

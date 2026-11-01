@@ -284,15 +284,27 @@ struct LoadedMap {
 
 /// `up` upscales ground, water and model textures (never sprites, which load elsewhere).
 /// Server maps that are copies of a stock map (its cells under a new name in the server's map
-/// cache, rathena db/import/map_cache.dat): the client draws the original's files.
-const MAP_COPIES: [(&str, &str); 1] = [
-    // Twin Flames: the battle against the Goddess.
-    ("tf_goddess", "herosria"),
+/// cache, written by rathena tools/twin_flames_maps.py): the client draws the original's files,
+/// at night if the copy says so. The Twin Flames Saga's memorial dungeons are instances of these.
+const MAP_COPIES: [(&str, &str, bool); 8] = [
+    ("tf_goddess", "herosria", false),   // The Celestial Veil
+    ("tf_kagemori", "amatsu", true),     // Kagemori Burning: the night the village burned
+    ("tf_fortress", "ama_dun02", false), // Kurogane's Fortress
+    ("tf_crimson", "ama_fild01", false), // The Crimson Fields
+    ("tf_shrine", "ama_dun03", false),   // The Shrine of Seals
+    ("tf_palace", "ama_in02", false),    // The Palace of Masks
+    ("tf_abyss", "thor_v03", false),     // The Abyssal Pit
+    ("tf_trial", "job_ko", false),       // The Trial of Balance
 ];
 
 /// The map whose files draw `name` (itself, unless it is a copy).
 fn map_files(name: &str) -> &str {
-    MAP_COPIES.iter().find(|(copy, _)| name.eq_ignore_ascii_case(copy)).map_or(name, |(_, original)| original)
+    MAP_COPIES.iter().find(|(copy, ..)| name.eq_ignore_ascii_case(copy)).map_or(name, |(_, original, _)| original)
+}
+
+/// Whether `name` is a copy drawn at night whatever the server's clock says.
+fn map_night(name: &str) -> bool {
+    MAP_COPIES.iter().any(|(copy, _, night)| *night && name.eq_ignore_ascii_case(copy))
 }
 
 fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler) -> anyhow::Result<LoadedMap> {
@@ -1113,8 +1125,11 @@ struct App {
     script_progress: Option<(std::time::Instant, f32)>,
     /// `progressbar_npc` over other units: id -> (elapsed ms, total ms).
     unit_progress: std::collections::HashMap<u32, (f32, f32)>,
-    /// `showscript` call-outs over units: id -> (text, age ms).
-    shouts: std::collections::HashMap<u32, (String, f32)>,
+    /// Text over units: id -> (text, age ms, speech). Speech is what a unit says aloud (chat,
+    /// npctalk, unittalk); the rest are `showscript` call-outs and Talkie Boxes.
+    shouts: std::collections::HashMap<u32, (String, f32, bool)>,
+    /// The server's night (EFST_SKE on ourselves); some map copies are drawn at night anyway.
+    server_night: bool,
     /// Devotion links: Crusader id -> the units it protects.
     devotions: std::collections::HashMap<u32, Vec<u32>>,
     /// Ground skill units' cells (for Talkie Box messages), and Graffiti texts on them.
@@ -1477,6 +1492,9 @@ impl App {
                     a.enter_map(vfs, name);
                 }
                 r.set_room_mask(None);
+                if self.net.is_some() {
+                    r.night = self.server_night || map_night(server_name);
+                }
                 self.world = Some(World { name: server_name.to_string(), outdoors, ground: map.mesh, gat, room: None, submerged });
                 self.ready_at = Some(std::time::Instant::now());
             }
@@ -1988,12 +2006,19 @@ impl App {
                     }
                 }
             }
-            Chat { kind, text, .. } => {
+            Chat { kind, from, text, color } => {
                 if let (ro_net::ChatKind::Whisper, Some(name)) = (kind, text.strip_prefix("(From ").and_then(|t| t.split_once(") : ")).map(|(n, _)| n.to_string())) {
                     self.last_whisper_from = Some(name);
                     self.play_sound("_chat_whisper.wav");
                 }
-                self.hud.push_chat(kind, text);
+                // What a unit says aloud also shows over its head: chat (ours comes back
+                // without a speaker), npctalk and unittalk.
+                match (kind, from) {
+                    (ro_net::ChatKind::Public | ro_net::ChatKind::Npc, Some(id)) => _ = self.shouts.insert(id, (text.clone(), 0.0, true)),
+                    (ro_net::ChatKind::Public, None) => _ = self.shouts.insert(self.account_id, (text.clone(), 0.0, true)),
+                    _ => {}
+                }
+                self.hud.push_chat_coloured(kind, text, color);
             }
             Menu(menu) => {
                 // Icons for items that may not be in the inventory (poisons, arrows to make).
@@ -3234,7 +3259,7 @@ impl App {
                 self.unit_progress.insert(id, (0.0, secs.max(1) as f32 * 1000.0));
             }
             ShowScript { id, text } => {
-                self.shouts.insert(id, (text, 0.0));
+                self.shouts.insert(id, (text, 0.0, false));
             }
             ShowDigit { kind, value } => self.digit = Some((kind, value, 0.0)),
             Devotion { src, targets } if targets.is_empty() => {
@@ -3482,7 +3507,7 @@ impl App {
                 self.graffiti.insert(id, text);
             }
             TalkieBox { id, text } => {
-                self.shouts.insert(id, (text, 0.0));
+                self.shouts.insert(id, (text, 0.0, false));
             }
             RentalTime { item, secs } => {
                 let name = self.item_db.as_ref().map_or_else(|| format!("Item #{item}"), |d| d.name(item, true));
@@ -3592,8 +3617,10 @@ impl App {
             // EFST_SKE on ourselves: the server's night (on) or day (off).
             StatusIcon { id, kind: 160, on, .. } if id == self.account_id => {
                 tracing::info!(night = on, "day/night");
+                self.server_night = on;
+                let copy_night = self.world.as_ref().is_some_and(|w| map_night(&w.name));
                 if let Some(r) = self.renderer.as_mut() {
-                    r.night = on;
+                    r.night = on || copy_night;
                 }
             }
             StatusIcon { id, kind, on, remain_ms } if id == self.account_id => self.buffs.set(kind, on, remain_ms),
@@ -6284,6 +6311,7 @@ impl App {
     fn npc_dialog(&mut self, d: ro_net::NpcDialog) {
         use hud::DialogMode;
         use ro_net::NpcDialog::*;
+        tracing::debug!(?d, "npc dialog");
         let title = |units: &std::collections::HashMap<u32, Mob>, npc: u32| units.get(&npc).map(|m| m.name.clone()).unwrap_or_default();
         let open = |dialog: &mut Option<hud::Dialog>, units: &std::collections::HashMap<u32, Mob>, npc: u32| {
             if dialog.as_ref().is_none_or(|d| d.npc != npc) {
@@ -6296,7 +6324,11 @@ impl App {
                 self.dialog.as_mut().unwrap().lines.push(text);
             }
             // A close with nothing on screen (touch scripts that only `close`): end it silently.
-            Close { npc } if self.dialog.as_ref().is_none_or(|d| d.npc != npc || d.lines.is_empty()) => {
+            // rAthena's `end` closes the dialog of every script that ran on us, so event
+            // scripts (OnPCLoadMapEvent...) send closes for NPCs we never talked to: those are
+            // not ours to answer, and must not take over the dialog that is open.
+            Close { npc } if self.dialog.as_ref().is_none_or(|d| d.npc != npc) => {}
+            Close { npc } if self.dialog.as_ref().is_some_and(|d| d.lines.is_empty()) => {
                 self.dialog = None;
                 if let Some((tx, _)) = self.net.as_ref() {
                     let _ = tx.send(ro_net::Command::Npc { npc, reply: ro_net::NpcReply::Close });
@@ -7200,10 +7232,10 @@ impl App {
             *t += dt;
             *t < *total
         });
-        // showscript call-outs stay up a few seconds.
-        self.shouts.retain(|_, (_, t)| {
+        // showscript call-outs stay up a few seconds; speech a little longer.
+        self.shouts.retain(|_, (_, t, speech)| {
             *t += dt;
-            *t < 4000.0
+            *t < if *speech { 5000.0 } else { 4000.0 }
         });
         if let Some((kind, _, t)) = self.digit.as_mut() {
             *t += dt;
@@ -7661,14 +7693,14 @@ impl App {
                 Some((r.project(m.actor.pos, size)?, frac))
             }))
             .collect();
-        let says: Vec<(glam::Vec2, String)> = self
+        let says: Vec<(glam::Vec2, String, bool)> = self
             .shouts
             .iter()
-            .filter_map(|(id, (text, _))| {
+            .filter_map(|(id, (text, _, speech))| {
                 let m = if *id == self.account_id { self.player.as_ref() } else { self.units.get(id) };
                 // Talkie Boxes are ground units, not actors.
                 let pos = m.map(|m| m.actor.pos).or_else(|| cell_pos_in(self.world.as_ref()?, *self.ground_units.get(id)?))?;
-                Some((r.project(pos, size)?, text.clone()))
+                Some((r.project(pos, size)?, text.clone(), *speech))
             })
             .collect();
         let scrawls: Vec<(glam::Vec2, String)> =
@@ -8791,6 +8823,7 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         script_progress: None,
         unit_progress: Default::default(),
         shouts: Default::default(),
+        server_night: false,
         devotions: Default::default(),
         ground_units: Default::default(),
         traps: Default::default(),
