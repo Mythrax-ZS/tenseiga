@@ -7,6 +7,11 @@ lighting contributes to the palette. Clouds drift slowly, and night blends the b
 toward moonlight and stars. The sky is an illustrated backdrop suited to RO's downward
 camera, rather than a physical horizon that would sit above the screen.
 
+Herosria (and the maps drawn from its files, such as Twin Flames' `tf_goddess`) floats in
+open space instead: the Milky Way arching across with its warm core and dark dust lanes,
+coloured nebulae, and four layers of twinkling stars, the same at any hour. MapSkyData's
+cloudy sky for Herosria is not applied over it.
+
 The sky draws before ground, models, water, sprites and effects in the HDR world pass.
 It does not write hardware depth. Its post-process depth is the same far value as empty
 space, so it cannot occlude the world. Water receives the map sky palette for reflections.

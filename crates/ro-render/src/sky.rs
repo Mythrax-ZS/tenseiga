@@ -16,6 +16,7 @@ struct Uniform {
     /// Camera yaw, pitch, aspect, vertical field of view.
     camera: [f32; 4],
     /// Direction toward the sun (opposite the direction light travels).
+    /// w: 1 for open space (the galaxy) instead of a sky.
     sun: [f32; 4],
 }
 
@@ -27,6 +28,9 @@ pub(crate) struct Sky {
 
 /// Match the horizon in sky.wgsl so distant geometry disappears into the same haze.
 pub(crate) fn horizon_color(profile: &SkyProfile, night: f32) -> [f32; 3] {
+    if profile.galaxy {
+        return profile.horizon;
+    }
     let day = glam::Vec3::from(profile.horizon);
     let moonlight = day * glam::Vec3::new(0.08, 0.10, 0.18) + glam::Vec3::new(0.008, 0.012, 0.027);
     day.lerp(moonlight, night.clamp(0.0, 1.0)).to_array()
@@ -34,6 +38,9 @@ pub(crate) fn horizon_color(profile: &SkyProfile, night: f32) -> [f32; 3] {
 
 /// Match the upper end of the sky gradient when shading distant outdoor geometry.
 pub(crate) fn zenith_color(profile: &SkyProfile, night: f32) -> [f32; 3] {
+    if profile.galaxy {
+        return profile.zenith;
+    }
     let day = glam::Vec3::from(profile.zenith);
     let moonlight = day * glam::Vec3::new(0.06, 0.08, 0.17) + glam::Vec3::new(0.004, 0.007, 0.018);
     day.lerp(moonlight, night.clamp(0.0, 1.0)).to_array()
@@ -125,7 +132,7 @@ impl Sky {
             clouds: [profile.cloud_cover, profile.cloud_scale, profile.wind_speed, profile.haze],
             time: [seconds, night.clamp(0.0, 1.0), profile.stars, profile.seed],
             camera: [camera.yaw, camera.pitch, aspect.max(0.01), camera.fovy],
-            sun: sun.extend(0.0).to_array(),
+            sun: sun.extend(if profile.galaxy { 1.0 } else { 0.0 }).to_array(),
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
     }

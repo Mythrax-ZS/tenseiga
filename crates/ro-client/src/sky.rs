@@ -27,7 +27,8 @@ pub fn for_map(
     let overrides = load_overrides();
     let selected = overrides.selected(&key);
     let mut profile = base_profile(&key, lighting, submerged, indoor, selected)?;
-    if let Some(data) = read(vfs, SKY_TABLE) {
+    // Open space keeps its own colours and stars over the original's sky table.
+    if let Some(data) = read(vfs, SKY_TABLE).filter(|_| !profile.galaxy) {
         match lub::eval(&data) {
             Ok(chunk) => apply_stock(&mut profile, &chunk, &key),
             Err(error) => tracing::warn!(%error, "could not read MapSkyData; using regional sky"),

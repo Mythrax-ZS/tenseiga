@@ -21,6 +21,8 @@ pub struct SkyProfile {
     pub stars: f32,
     /// Stable per-map variation, 0..1. Does not change when revisiting a map.
     pub seed: f32,
+    /// Open space instead of a sky: the Milky Way, nebulae and stars at any hour (Herosria).
+    pub galaxy: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -36,6 +38,7 @@ enum Climate {
     Industrial,
     Faerie,
     Volcanic,
+    Cosmos,
 }
 
 impl SkyProfile {
@@ -69,7 +72,8 @@ impl SkyProfile {
     fn from_key(key: &str, lighting: &Lighting) -> Self {
         // Palettes are authored in sRGB for predictable art direction. Conversion
         // happens once here, before the sky enters the renderer's linear HDR pass.
-        let (name, zenith, horizon, cloud, cover, scale, wind, haze, stars) = match climate(key) {
+        let climate = climate(key);
+        let (name, zenith, horizon, cloud, cover, scale, wind, haze, stars) = match climate {
             Climate::Temperate => ("temperate", [0.24, 0.49, 0.77], [0.82, 0.89, 0.92], [1.0, 0.96, 0.87], 0.46, 1.65, 0.006, 0.22, 0.72),
             Climate::Coast => ("coastal", [0.12, 0.57, 0.76], [0.70, 0.91, 0.88], [1.0, 0.98, 0.88], 0.42, 1.35, 0.010, 0.20, 0.80),
             Climate::Desert => ("desert", [0.39, 0.56, 0.69], [0.96, 0.77, 0.50], [1.0, 0.90, 0.72], 0.16, 2.45, 0.004, 0.57, 0.95),
@@ -81,6 +85,8 @@ impl SkyProfile {
             Climate::Industrial => ("industrial", [0.40, 0.46, 0.51], [0.80, 0.71, 0.57], [0.79, 0.77, 0.70], 0.72, 1.9, 0.005, 0.70, 0.22),
             Climate::Faerie => ("faerie", [0.36, 0.34, 0.67], [0.75, 0.84, 0.91], [0.96, 0.90, 1.0], 0.40, 1.75, 0.004, 0.24, 1.0),
             Climate::Volcanic => ("volcanic", [0.35, 0.23, 0.30], [0.88, 0.48, 0.29], [0.62, 0.49, 0.46], 0.75, 1.4, 0.006, 0.72, 0.12),
+            // Deep space; `cloud` tints the nebulae.
+            Climate::Cosmos => ("cosmos", [0.03, 0.03, 0.09], [0.13, 0.09, 0.24], [0.62, 0.42, 0.95], 0.0, 1.0, 0.0, 0.25, 1.0),
         };
         let hash = key.bytes().fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
         let sample = |shift: u32| ((hash >> shift) & 255) as f32 / 255.0;
@@ -107,6 +113,7 @@ impl SkyProfile {
             haze,
             stars,
             seed,
+            galaxy: matches!(climate, Climate::Cosmos),
         }
     }
 }
@@ -188,7 +195,9 @@ fn pvp_city(n: &str) -> Option<&'static str> {
 
 fn climate(n: &str) -> Climate {
     let n = pvp_city(n).unwrap_or(n);
-    if n == "niflheim" || n == "niflxmas" || n.starts_with("nif_") || n.starts_with("nameless") || n.starts_with("glast") || n.starts_with("gl_") || matches!(n, "1@glast" | "bl_death" | "bl_soul") {
+    if n == "herosria" {
+        Climate::Cosmos
+    } else if n == "niflheim" || n == "niflxmas" || n.starts_with("nif_") || n.starts_with("nameless") || n.starts_with("glast") || n.starts_with("gl_") || matches!(n, "1@glast" | "bl_death" | "bl_soul") {
         Climate::Gothic
     } else if n == "xmas" || n.starts_with("xmas_") || n == "manuk" || n.starts_with("man_") || n.starts_with("dicastes") || n.starts_with("dic_") || n.starts_with("que_qsch") || n.starts_with("que_qaru") || matches!(n, "icecastle" | "bl_ice") {
         Climate::Snow
@@ -255,6 +264,7 @@ mod tests {
         assert!(desert.haze > prontera.haze);
         assert!(desert.cloud_cover < prontera.cloud_cover);
         assert_eq!(SkyProfile::for_map("pvp_y_8-5", &light).unwrap().name, desert.name);
+        assert!(SkyProfile::for_map("herosria", &light).unwrap().galaxy && !prontera.galaxy);
     }
 
     #[test]
