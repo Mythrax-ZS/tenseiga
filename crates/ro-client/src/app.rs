@@ -671,7 +671,7 @@ fn hotkey_slot(k: winit::keyboard::NamedKey) -> Option<usize> {
 
 /// The camera's jolt while a screen quake runs. roBrowser's Camera.processQuake flips a tenth
 /// of a cell side to side every frame, which at today's frame rates blurs into nothing; here the
-/// camera jumps to the other side every 33 ms (about 30 times a second), a third of a cell
+/// camera jumps to the other side every 33 ms (about 30 times a second), a sixth of a cell
 /// across and half that up or down, each jolt a little bigger or smaller.
 fn quake_offset(quakes: &mut Vec<(std::time::Instant, std::time::Instant)>, now: std::time::Instant, yaw: f32) -> glam::Vec3 {
     quakes.retain(|q| q.1 > now);
@@ -680,7 +680,7 @@ fn quake_offset(quakes: &mut Vec<(std::time::Instant, std::time::Instant)>, now:
     let sign = |b: bool| if b { 1.0 } else { -1.0 };
     // A fixed scramble of the step: 0.75 to 1.25.
     let size = (step.wrapping_mul(2_654_435_761) >> 24) as f32 / 255.0 * 0.5 + 0.75;
-    let across = sign(step % 2 == 0) * size * 0.35 * ro_render::CELL;
+    let across = sign(step % 2 == 0) * size * 0.175 * ro_render::CELL;
     glam::Vec3::new(yaw.cos() * across, sign(step % 4 < 2) * across.abs() * 0.5, -yaw.sin() * across)
 }
 
@@ -8968,7 +8968,7 @@ mod quake_tests {
         let (a, same, b) = (super::quake_offset(&mut quakes, at(1), 0.0), super::quake_offset(&mut quakes, at(20), 0.0), super::quake_offset(&mut quakes, at(40), 0.0));
         assert_eq!(a, same, "steady within a beat, whatever the frame rate");
         assert!(a.x > 0.0 && b.x < 0.0);
-        assert!((0.26..=0.44).contains(&(a.x / ro_render::CELL)));
+        assert!((0.13..=0.22).contains(&(a.x / ro_render::CELL)));
         assert_eq!(super::quake_offset(&mut quakes, at(700), 0.0), glam::Vec3::ZERO);
         assert_eq!(quakes.len(), 1, "the finished quake is dropped");
     }
