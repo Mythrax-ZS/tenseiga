@@ -5,6 +5,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Whether this device can ray trace (set once the renderer is up); the ray tracing settings
+/// are greyed out where it can't.
+pub static RAY_TRACING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -461,11 +465,13 @@ impl Settings {
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Shadows"));
         ui.add_enabled(v.hd2d, egui::Slider::new(&mut v.shadows, 0.0..=1.0));
         ui.end_row();
-        ui.add_enabled_ui(v.hd2d, |ui| ui.label("Ray-traced shadows")).response.on_hover_text("Outdoors, buildings and trees cast shadows that follow the sun. Needs a GPU with ray tracing");
-        ui.add_enabled(v.hd2d, egui::Checkbox::without_text(&mut v.ray_traced_shadows));
+        let rt = v.hd2d && RAY_TRACING.load(std::sync::atomic::Ordering::Relaxed);
+        let unavailable = "Not available on this device: it needs a desktop GPU with ray tracing";
+        ui.add_enabled_ui(rt, |ui| ui.label("Ray-traced shadows")).response.on_hover_text("Outdoors, buildings and trees cast shadows that follow the sun. Needs a GPU with ray tracing").on_disabled_hover_text(unavailable);
+        ui.add_enabled(rt, egui::Checkbox::without_text(&mut v.ray_traced_shadows)).on_disabled_hover_text(unavailable);
         ui.end_row();
-        ui.add_enabled_ui(v.hd2d, |ui| ui.label("Ray-traced reflections")).response.on_hover_text("Outdoors, water reflects buildings, ships and trees, even off screen. Needs a GPU with ray tracing");
-        ui.add_enabled(v.hd2d, egui::Checkbox::without_text(&mut v.ray_traced_reflections));
+        ui.add_enabled_ui(rt, |ui| ui.label("Ray-traced reflections")).response.on_hover_text("Outdoors, water reflects buildings, ships and trees, even off screen. Needs a GPU with ray tracing").on_disabled_hover_text(unavailable);
+        ui.add_enabled(rt, egui::Checkbox::without_text(&mut v.ray_traced_reflections)).on_disabled_hover_text(unavailable);
         ui.end_row();
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Sun height"));
         ui.add_enabled(v.hd2d, egui::Slider::new(&mut v.sun_elevation, 15.0..=85.0).suffix("°"));

@@ -8165,6 +8165,7 @@ impl ApplicationHandler for App {
                 if let Some(d) = self.distance {
                     r.camera.distance = d;
                 }
+                settings::RAY_TRACING.store(r.ray_tracing(), std::sync::atomic::Ordering::Relaxed);
                 self.renderer = Some(r);
                 self.apply_sound_and_effects();
             }

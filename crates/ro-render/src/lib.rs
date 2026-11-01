@@ -1020,6 +1020,12 @@ impl Renderer {
         &self.adapter_name
     }
 
+    /// Whether ray-traced shadows and reflections can run here (rt::device_needs: a GPU with
+    /// ray queries, and never on Android).
+    pub fn ray_tracing(&self) -> bool {
+        self.rt_layout.is_some()
+    }
+
     /// GPU memory this device has allocated and reserved from the driver (bytes), on Vulkan
     /// and DX12. Not counted: the swapchain and the driver's own memory.
     pub fn vram(&self) -> Option<(u64, u64)> {
