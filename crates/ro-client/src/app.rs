@@ -669,18 +669,19 @@ fn hotkey_slot(k: winit::keyboard::NamedKey) -> Option<usize> {
     [F1, F2, F3, F4, F5, F6, F7, F8, F9].iter().position(|&f| f == k)
 }
 
-/// The camera's jolt this frame while a screen quake runs (roBrowser's Camera.processQuake): a
-/// tenth of a cell to one side, give or take a quarter, flipping side every frame.
-fn quake_offset(quakes: &mut Vec<(std::time::Instant, std::time::Instant)>, flip: &mut bool, yaw: f32) -> glam::Vec3 {
-    let now = std::time::Instant::now();
+/// The camera's jolt while a screen quake runs. roBrowser's Camera.processQuake flips a tenth
+/// of a cell side to side every frame, which at today's frame rates blurs into nothing; here the
+/// camera jumps to the other side every 33 ms (about 30 times a second), a third of a cell
+/// across and half that up or down, each jolt a little bigger or smaller.
+fn quake_offset(quakes: &mut Vec<(std::time::Instant, std::time::Instant)>, now: std::time::Instant, yaw: f32) -> glam::Vec3 {
     quakes.retain(|q| q.1 > now);
-    if !quakes.iter().any(|q| q.0 <= now) {
-        return glam::Vec3::ZERO;
-    }
-    *flip = !*flip;
-    let jitter = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()) % 1000) as f32 / 1000.0 * 0.5 - 0.25;
-    let side = if *flip { 1.0 } else { -1.0 } * (1.0 + jitter) * 0.1 * ro_render::CELL;
-    glam::Vec3::new(yaw.cos(), 0.0, -yaw.sin()) * side
+    let Some(start) = quakes.iter().filter(|q| q.0 <= now).map(|q| q.0).min() else { return glam::Vec3::ZERO };
+    let step = ((now - start).as_millis() / 33) as u32;
+    let sign = |b: bool| if b { 1.0 } else { -1.0 };
+    // A fixed scramble of the step: 0.75 to 1.25.
+    let size = (step.wrapping_mul(2_654_435_761) >> 24) as f32 / 255.0 * 0.5 + 0.75;
+    let across = sign(step % 2 == 0) * size * 0.35 * ro_render::CELL;
+    glam::Vec3::new(yaw.cos() * across, sign(step % 4 < 2) * across.abs() * 0.5, -yaw.sin() * across)
 }
 
 /// The next free ScreenShot\screenNNNN.png in the working directory (the original numbers
@@ -1061,8 +1062,6 @@ struct App {
     prayer_at: usize,
     /// Screen quakes running or due: (start, end).
     quakes: Vec<(std::time::Instant, std::time::Instant)>,
-    /// Which side the quake jolts the camera to this frame.
-    quake_flip: bool,
     /// Varies the hit sparks' flecks.
     spark_seed: u32,
     /// Walking toward the attack target after the server said it was out of reach.
@@ -7235,7 +7234,7 @@ impl App {
                 p.fit_pose(r);
                 let a = p.update(dt, w, octant, idle);
                 tracing::trace!(x = a.pos.x / ro_render::CELL, z = a.pos.z / ro_render::CELL, dt, cell = ?p.walker.cell, next = ?p.walker.next(), "walk trace");
-                r.camera.target = a.pos + quake_offset(&mut self.quakes, &mut self.quake_flip, r.camera.yaw);
+                r.camera.target = a.pos + quake_offset(&mut self.quakes, std::time::Instant::now(), r.camera.yaw);
                 let level = self.hud.status.base_level >= AURA_LEVEL as i64;
                 p.aura_ms = auras.push(r, self.hat_auras.get(&self.account_id).copied(), level, &a, p.aura_ms + dt, self.account_id);
                 r.actors.push(a);
@@ -8747,7 +8746,6 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         shift: false,
         prayer_at: 0,
         quakes: vec![],
-        quake_flip: false,
         spark_seed: 1,
         screenshot: false,
         emote_win: Default::default(),
@@ -8961,19 +8959,18 @@ mod quake_tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn jolts_flip_sides_while_a_quake_runs() {
-        let now = Instant::now();
-        let (mut flip, yaw) = (false, 0.0);
-        let mut quakes = vec![(now + Duration::from_secs(5), now + Duration::from_secs(6))];
-        assert_eq!(super::quake_offset(&mut quakes, &mut flip, yaw), glam::Vec3::ZERO, "not started yet");
-        quakes.push((now, now + Duration::from_secs(5)));
-        let a = super::quake_offset(&mut quakes, &mut flip, yaw);
-        let b = super::quake_offset(&mut quakes, &mut flip, yaw);
-        assert!(a.x > 0.0 && b.x < 0.0 && a.y == 0.0);
-        assert!((0.075..=0.125).contains(&(a.x / ro_render::CELL)));
-        quakes = vec![(now - Duration::from_secs(2), now - Duration::from_secs(1))];
-        assert_eq!(super::quake_offset(&mut quakes, &mut flip, yaw), glam::Vec3::ZERO);
-        assert!(quakes.is_empty(), "finished quakes are dropped");
+    fn jolts_change_sides_on_a_fixed_beat_while_a_quake_runs() {
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let mut quakes = vec![(at(5000), at(6000))];
+        assert_eq!(super::quake_offset(&mut quakes, t0, 0.0), glam::Vec3::ZERO, "not started yet");
+        quakes.push((t0, at(650)));
+        let (a, same, b) = (super::quake_offset(&mut quakes, at(1), 0.0), super::quake_offset(&mut quakes, at(20), 0.0), super::quake_offset(&mut quakes, at(40), 0.0));
+        assert_eq!(a, same, "steady within a beat, whatever the frame rate");
+        assert!(a.x > 0.0 && b.x < 0.0);
+        assert!((0.26..=0.44).contains(&(a.x / ro_render::CELL)));
+        assert_eq!(super::quake_offset(&mut quakes, at(700), 0.0), glam::Vec3::ZERO);
+        assert_eq!(quakes.len(), 1, "the finished quake is dropped");
     }
 }
 
