@@ -14,7 +14,7 @@ client's log names every packet it doesn't handle yet (`unhandled packet`, once 
 - [x] ZC_MSG_COLOR, ZC_MSG_VALUE, ZC_MSG_SKILL, and every ZC_MSG id (was: only two)
 - [x] ZC_SPECIALPOPUP (System/spopup.lub: chat and/or floating banner), ZC_SKILLMSG
 - [x] ZC_EQUIPMENT_EFFECT
-- [~] ZC_REMOVE_EFFECT (`removespecialeffect`): stops a script effect still playing on the unit (was: read, then ignored); not yet tested in game
+- [x] ZC_REMOVE_EFFECT (`removespecialeffect`): stops a script effect still playing on the unit. Tested: Lord of Vermillion cut off 700 ms in
 - [x] ZC_NOTIFY_EFFECT3 (0x0284 / 0x0b69: effect plus green heal numbers)
 - [x] ZC_NPC_MARKET_OPEN / PURCHASE_RESULT (market shops)
 - [x] ZC_NPC_BARTER_MARKET_ITEMINFO / EXPANDED_BARTER (barter shops)
@@ -129,7 +129,8 @@ headers and clif.cpp, then compared with what this client reads and sends.
 - [x] Selectable item packages (CZ_USE_PACKAGEITEM): using a box listed in selectpackage\selectpackageitem.lub (iRO's, then kRO's newer boxes) opens a window with its sets and their contents; OK asks for that set. Tested with rAthena's Select_Example1 (101060): set 2 gave its four Level 5 weapons. The window shows the client table's contents, the server gives item_packages.yml's, so a custom box needs both
 - [~] Super Novice: /doridori (CZ_DORIDORI, the SP regen bonus; our head shakes left and right, others don't see it as the server doesn't tell them) and the guardian angel prayer said line by line in chat (msgstringtable 790-793, CZ_CHOPOKGI). Not tested in game (no Super Novice)
 - [ ] Pet emotions (CZ_PET_ACT): when the original sends them is unknown
-- [~] /changedress and /nocosplay (CZ_REQ_CHANGEDRESS), stop attacking with the controller's East button (CZ_CANCEL_LOCKON), /resetskill (CZ_RESET_SKILL, which rAthena runs as @resetskill, so GMs only): not tested in game
+- [x] Costumes (OPTION_WEDDING, XMAS, SUMMER, HANBOK, OKTOBERFEST, SUMMER2: the wedding and rAthena's @costume): the body becomes the costume's sprite (결혼, 산타, 여름, 한복, 옥토버패스트, 여름2) without weapon or shield, as the original does from the option alone. Doram keep their own body for now. /changedress and /nocosplay (CZ_REQ_CHANGEDRESS) take it off: tested with the wedding and Xmas costumes
+- [~] Stop attacking with the controller's East button (CZ_CANCEL_LOCKON), /resetskill (CZ_RESET_SKILL, which rAthena runs as @resetskill, so GMs only): not tested in game
 - [x] Turning in place (CZ_CHANGE_DIRECTION): Shift+click the ground (or click while sitting; holding the button keeps turning as the mouse goes round), and talking to an NPC turns toward it. One step round turns only the head, a second click the same way brings the body round, wider turns move the body to one step short with the head looking the rest (roBrowserLegacy's lookTo). Others' head turns come from ZC_CHANGE_DIRECTION and the unit packets' headDir; standing and sitting draw the matching head-turn frame
 - [x] Ground cursor: texture\grid.tga's corner marks on the walkable cell under the mouse, mint green and half opaque (measured from the original)
 - [~] Storage: Shift+right-click takes an item into the inventory's favourites tab (CZ_MOVE_ITEM_TO_PERSONAL, clients from 2025-01-22): not tested in game

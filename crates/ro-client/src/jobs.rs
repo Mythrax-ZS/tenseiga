@@ -33,6 +33,7 @@ const JOBS: &[(i16, &str, &str)] = &[
     (27, "여름", "Summer"),
     (28, "한복", "Hanbok"),
     (29, "옥토버패스트", "Oktoberfest"),
+    (30, "여름2", "Summer"),
     (4001, "초보자", "High Novice"),
     (4002, "검사", "High Swordman"),
     (4003, "마법사", "High Mage"),
