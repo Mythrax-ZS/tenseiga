@@ -1438,7 +1438,12 @@ impl App {
                 self.world = Some(World { name: server_name.to_string(), outdoors, ground: map.mesh, gat, room: None, submerged });
                 self.ready_at = Some(std::time::Instant::now());
             }
-            Err(e) => tracing::error!("map {name}: {e:#}"),
+            Err(e) => {
+                tracing::error!("map {name}: {e:#}");
+                if let Some(s) = self.splash.as_mut() {
+                    s.fail(format!("{server_name} could not be loaded: {e:#}"));
+                }
+            }
         }
     }
 
@@ -7363,8 +7368,9 @@ impl App {
         self.hud.digit_text = self.digit.map(|(kind, value, t)| digit_text(kind, value, t));
         self.hud.pvp_text = self.pvp_rank.map(|(rank, total)| format!("{rank} / {total}"));
         if let Some(state) = self.egui_state.as_mut() {
-            // Full screen follows the setting (F11 or the settings window).
-            if self.capture.is_none() && window.fullscreen().is_some() != self.settings.fullscreen {
+            // Full screen follows the setting (F11 or the settings window). Android apps are
+            // always full screen and refuse the request, which would otherwise repeat each frame.
+            if !cfg!(target_os = "android") && self.capture.is_none() && window.fullscreen().is_some() != self.settings.fullscreen {
                 window.set_fullscreen(self.settings.fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
             }
             let mut input = state.take_egui_input(window);

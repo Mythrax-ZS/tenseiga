@@ -17,6 +17,8 @@ pub struct Splash {
     loading_names: Vec<String>,
     /// The loading screen, and when it was first drawn.
     loading: Option<(egui::TextureHandle, Option<f64>)>,
+    /// Why the map didn't load, shown on the loading screen (it then stays up).
+    failed: Option<String>,
     started: Option<f64>,
 }
 
@@ -42,7 +44,7 @@ fn cover(ctx: &egui::Context, tex: &egui::TextureHandle, alpha: f32) {
 impl Splash {
     pub fn new(ctx: &egui::Context, vfs: Option<&ro_vfs::Vfs>) -> Self {
         let Some(vfs) = vfs else {
-            return Self { title: None, grade: None, loading_names: vec![], loading: None, started: None };
+            return Self { title: None, grade: None, loading_names: vec![], loading: None, failed: None, started: None };
         };
         // The original ships up to 36 loading screens; use whichever exist.
         let loading_names = (0..40).map(|i| format!("{UI}loading{i:02}.jpg")).filter(|p| vfs.read(p).ok().flatten().is_some()).collect();
@@ -51,6 +53,7 @@ impl Splash {
             grade: load(ctx, vfs, &format!("{UI}t_gamegrade.tga")),
             loading_names,
             loading: None,
+            failed: None,
             started: None,
         }
     }
@@ -93,7 +96,13 @@ impl Splash {
         let path = &self.loading_names[seed % self.loading_names.len()];
         if let Some(tex) = load(ctx, vfs, path) {
             self.loading = Some((tex, None));
+            self.failed = None;
         }
+    }
+
+    /// The map didn't load: say why on the loading screen.
+    pub fn fail(&mut self, why: String) {
+        self.failed = Some(why);
     }
 
     /// Draws the loading screen (`done` once the map is in). Returns false once it has faded away.
@@ -126,6 +135,11 @@ impl Splash {
         let mut fill = bar;
         fill.set_width(bar.width() * progress.clamp(0.0, 1.0));
         painter.rect_filled(fill, 2.0, Color32::from_rgba_unmultiplied(120, 190, 255, a));
+        if let Some(why) = &self.failed {
+            let at = Pos2::new(bar.center().x, bar.top() - 14.0);
+            painter.text(at + Vec2::splat(1.0), egui::Align2::CENTER_BOTTOM, why, egui::FontId::proportional(16.0), Color32::BLACK);
+            painter.text(at, egui::Align2::CENTER_BOTTOM, why, egui::FontId::proportional(16.0), Color32::from_rgb(255, 120, 110));
+        }
         ctx.request_repaint();
         true
     }
