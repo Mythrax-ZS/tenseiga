@@ -60,6 +60,80 @@ fn cloud_noise(p: vec3<f32>) -> f32 {
         + noise(p * 8.23 + vec3(19.6, 5.2, 15.7)) * 0.04;
 }
 
+fn fbm(p: vec3<f32>) -> f32 {
+    return noise(p) * 0.5
+        + noise(p * 2.02 + vec3(5.3, 1.7, 9.2)) * 0.25
+        + noise(p * 4.07 + vec3(2.9, 8.1, 4.4)) * 0.125
+        + noise(p * 8.13 + vec3(7.7, 3.6, 1.2)) * 0.0625;
+}
+
+// One layer of stars on the bearing / elevation grid, `cells` to a full turn, a star in
+// `chance` of them (`mask` thins them per pixel). Blue-white to amber, twinkling; `glow`
+// adds a soft halo and a faint four-point cross for the brightest.
+fn star_layer(bearing: f32, elevation: f32, cells: f32, chance: f32, mask: f32, size: f32, bright: f32, glow: f32, layer: f32, t: f32) -> vec3<f32> {
+    let p = vec2(bearing, elevation) * (cells / 6.2831853);
+    // Derivatives first, while control flow is uniform.
+    let aa = max(length(fwidth(p)) * 0.5, 0.004);
+    let c = floor(p);
+    let id = vec3(c.x - floor(c.x / cells) * cells, c.y, layer);
+    let h = hash(id);
+    let offset = vec2(hash(id + vec3(17.0)), hash(id + vec3(39.0))) * 0.6 + 0.2;
+    let d = fract(p) - offset;
+    let r = size * (0.5 + hash(id + vec3(71.0)));
+    let core = 1.0 - smoothstep(r, r + aa, length(d));
+    let halo = glow * (exp(-dot(d, d) / (r * r * 9.0)) * 0.35
+        + exp(-abs(d.x) / (r * 0.25)) * exp(-abs(d.y) / (r * 5.0)) * 0.25
+        + exp(-abs(d.y) / (r * 0.25)) * exp(-abs(d.x) / (r * 5.0)) * 0.25);
+    let warmth = hash(id + vec3(91.0));
+    let tint = mix(vec3(0.62, 0.74, 1.0), vec3(1.0, 0.82, 0.58), warmth * warmth);
+    let twinkle = 0.72 + 0.28 * sin(t * (0.8 + hash(id + vec3(53.0)) * 2.4) + h * 118.0);
+    let lit = step(1.0 - chance * mask, h);
+    return tint * (core + halo) * bright * (0.4 + 0.6 * hash(id + vec3(29.0))) * twinkle * lit;
+}
+
+// Open space: the Milky Way arching across, its bright core, dark dust lanes, coloured
+// nebulae and several layers of stars. `s.cloud` tints the nebulae.
+fn galaxy(direction: vec3<f32>, bearing: f32, elevation: f32, height: f32) -> vec3<f32> {
+    let t = s.time.x;
+    var color = mix(s.horizon.rgb, s.zenith.rgb, pow(height, 0.6));
+
+    // Galactic frame: the core sits ahead at the default camera, 30 degrees up, and the
+    // band climbs from lower left to upper right through it.
+    let core_dir = normalize(vec3(0.0, 0.5, 0.87));
+    let pole = normalize(vec3(-0.52, 0.74, -0.425));
+    let across = cross(pole, core_dir);
+    let lat = dot(direction, pole);
+    let lon = atan2(dot(direction, across), dot(direction, core_dir));
+    let band = exp(-pow(lat / 0.17, 2.0));
+    let bulge = exp(-pow(lon / 0.45, 2.0)) * exp(-pow(lat / 0.11, 2.0));
+
+    let q = direction * 4.0;
+    let warp = vec3(fbm(q + vec3(3.1)), fbm(q + vec3(8.7, 1.3, 5.9)), 0.0);
+    let clumps = fbm(direction * 7.0 + warp * 1.6);
+    let lanes = smoothstep(0.4, 0.62, fbm(direction * 11.0 + warp * 2.2)) * exp(-pow((lat - 0.015) / 0.08, 2.0));
+    let arm = mix(vec3(0.26, 0.34, 0.80), vec3(0.75, 0.70, 0.92), clumps);
+    let glowing = arm * band * (0.08 + 0.42 * clumps * clumps) + vec3(1.0, 0.62, 0.36) * bulge * (0.25 + 0.35 * clumps);
+    color += glowing * (1.0 - 0.92 * lanes);
+
+    // Nebulae: warped clouds, thickest near the band, magenta and violet with teal veils.
+    let n1 = fbm(q * 0.8 + warp * 2.5 + vec3(11.0));
+    let n2 = fbm(q * 1.6 + vec3(4.0, 9.0, 2.0));
+    let wisps = 0.45 + 0.55 * fbm(direction * 22.0 + warp * 3.0);
+    let cloud = smoothstep(0.48, 0.8, n1) * wisps * (0.3 + 0.7 * exp(-pow(lat / 0.4, 2.0)));
+    let hue = mix(mix(vec3(0.85, 0.22, 0.55), s.cloud.rgb, smoothstep(0.35, 0.65, n2)), vec3(0.12, 0.62, 0.75), smoothstep(0.6, 0.78, n2));
+    color += hue * cloud * 0.22 * (1.0 - 0.6 * lanes);
+
+    // Stars: a fine dusting, thicker in the band; ordinary stars; a few bright ones.
+    color += star_layer(bearing, elevation, 1400.0, 0.55, band, 0.09, 0.32, 0.0, 1.0, t);
+    color += star_layer(bearing, elevation, 900.0, 0.14, 1.0, 0.08, 0.45, 0.0, 2.0, t);
+    color += star_layer(bearing, elevation, 420.0, 0.07, 1.0, 0.06, 0.9, 0.0, 3.0, t);
+    color += star_layer(bearing, elevation, 150.0, 0.05, 1.0, 0.035, 3.0, 1.0, 4.0, t);
+
+    // A little haze where the sky meets the map's edge.
+    color = mix(color, s.horizon.rgb, (1.0 - smoothstep(0.0, 0.2, height)) * s.clouds.w);
+    return max(color, vec3(0.0));
+}
+
 struct FsOut {
     @location(0) color: vec4<f32>,
     @location(1) info: vec2<f32>,
@@ -79,6 +153,12 @@ fn fs_main(input: VsOut) -> FsOut {
     let direction = vec3(sin(bearing) * cos(elevation), sin(elevation), cos(bearing) * cos(elevation));
 
     let height = clamp((elevation - 0.08) / 0.82, 0.0, 1.0);
+    if s.sun.w > 0.5 {
+        var space: FsOut;
+        space.color = vec4(galaxy(direction, bearing, elevation, height), 1.0);
+        space.info = vec2(60000.0, 0.0);
+        return space;
+    }
     let gradient = pow(height, 0.7 + haze * 0.4);
     let day_color = mix(s.horizon.rgb, s.zenith.rgb, gradient);
     // Keep each map's hue in moonlight rather than replacing every sky with the same blue.
