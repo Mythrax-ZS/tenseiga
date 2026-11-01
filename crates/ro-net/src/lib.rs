@@ -812,6 +812,9 @@ pub enum Command {
     Attack { target: u32, keep: bool },
     /// Sit down (true) or stand up.
     Sit(bool),
+    /// A request that is its opcode alone, by rAthena handler (`ro_proto::packets::BareDb`):
+    /// stop attacking, /doridori, the Super Novice prayer, /changedress, /resetskill.
+    Bare(&'static str),
     /// After dying: 0 return to the save point, 1 character select.
     Restart(u8),
     /// Ask to leave the game (Esc menu Exit); the answer is Event::DisconnectAck.
@@ -1072,6 +1075,7 @@ impl MapSession {
                     Some(Command::Captcha(r)) => self.send(r).await?,
                     Some(Command::Attack { target, keep }) => self.send(CzRequestAct { target, action: if keep { 7 } else { 0 } }).await?,
                     Some(Command::Sit(sit)) => self.send(CzRequestAct { target: 0, action: if sit { 2 } else { 3 } }).await?,
+                    Some(Command::Bare(handler)) => self.send(ro_proto::packets::BareDb(handler)).await?,
                     Some(Command::Restart(kind)) => self.send(CzRestart { kind }).await?,
                     Some(Command::Quit) => self.send(CzReqDisconnect).await?,
                     Some(Command::AutoRevive) => self.send(CzStandingResurrection).await?,

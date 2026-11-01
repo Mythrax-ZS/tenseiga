@@ -124,11 +124,13 @@ headers and clif.cpp, then compared with what this client reads and sends.
 - [x] CZ_REQ_ONECLICK_ITEMIDENTIFY: identify with a carried Magnifier
 - [x] CZ_USE_SKILL_START / END: hold Rolling Cutter's shortcut key
 - [x] Inventory items dragged onto the world are dropped (stacks ask how many)
-- [ ] Selectable item packages (CZ_USE_PACKAGEITEM; client table selectpackageitem.lub, box names untranslated)
-- [ ] Super Novice /doridori and the 99% chant (CZ_DORIDORI, CZ_CHOPOKGI)
-- [ ] Pet emotions from the pet window (CZ_PET_ACT)
-- [ ] /changedress (CZ_REQ_CHANGEDRESS), stop-attack (CZ_CANCEL_LOCKON), facing changes (CZ_CHANGE_DIRECTION)
-- [ ] Storage favourites tab (CZ_MOVE_ITEM_FROM_STORE_TO_FAVORITE), skill reset (CZ_RESET_SKILL), private airship
+- [x] Selectable item packages (CZ_USE_PACKAGEITEM): using a box listed in selectpackage\selectpackageitem.lub (iRO's, then kRO's newer boxes) opens a window with its sets and their contents; OK asks for that set. Tested with rAthena's Select_Example1 (101060): set 2 gave its four Level 5 weapons. The window shows the client table's contents, the server gives item_packages.yml's, so a custom box needs both
+- [~] Super Novice: /doridori (CZ_DORIDORI, the SP regen bonus; the head doesn't shake) and the guardian angel prayer said line by line in chat (msgstringtable 790-793, CZ_CHOPOKGI). Not tested in game (no Super Novice)
+- [ ] Pet emotions (CZ_PET_ACT): when the original sends them is unknown
+- [~] /changedress and /nocosplay (CZ_REQ_CHANGEDRESS), stop attacking with the controller's East button (CZ_CANCEL_LOCKON), /resetskill (CZ_RESET_SKILL, which rAthena runs as @resetskill, so GMs only): not tested in game
+- [ ] Facing changes (CZ_CHANGE_DIRECTION): the original's control for turning in place is unknown
+- [~] Storage: Shift+right-click takes an item into the inventory's favourites tab (CZ_MOVE_ITEM_TO_PERSONAL, clients from 2025-01-22): not tested in game
+- [ ] Private airship (CZ_PRIVATE_AIRSHIP_REQUEST): needs a map picker; nothing on the server opens it
 - [x] GM tools: /b /nb /lb /nlb /hide /mm /recall /shift /item /monster /rc /check /killall /resetstate /resetcooltime /changemaptype, and GM right-click actions (config `gm`)
 - [ ] GM macro-detector captcha registration and preview (CZ_UPLOAD_MACRO_DETECTOR_CAPTCHA, CZ_REQ_PREVIEW_MACRO_DETECTOR)
-- Not planned: auction house, pre-RODEX mail and the old party booking (replaced at this client version); /resetskill (CZ_RESET type 1 is compiled out of rAthena at this version) and account-name lookup (rAthena always answers with an empty name)
+- Not planned: auction house, pre-RODEX mail and the old party booking (replaced at this client version); account-name lookup (rAthena always answers with an empty name)
