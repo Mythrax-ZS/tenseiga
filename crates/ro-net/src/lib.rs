@@ -244,8 +244,8 @@ pub enum Event {
     MapMove { map: String, x: u16, y: u16 },
     /// A status value changed (see `sp`): HP, SP, EXP, level, zeny, weight...
     Stat { id: u16, value: i64 },
-    /// A chat line; `from` is the speaking unit when known.
-    Chat { kind: ChatKind, from: Option<u32>, text: String },
+    /// A chat line; `from` is the speaking unit when known, `color` the RGB a script asked for.
+    Chat { kind: ChatKind, from: Option<u32>, text: String, color: Option<[u8; 3]> },
     /// Another unit came into view, or (Walking) started moving.
     Unit(UnitInfo),
     /// Someone attacked (or sat, stood, picked up...).
@@ -1176,9 +1176,9 @@ impl MapSession {
                         0x00fa => Some(Event::PartyCreated { ok: data[2] == 0 }),
                         0x0ae7 => parse_agency_ask(&data).map(Event::AgencyAsk),
                         0x0afa => parse_agency_result(&data).map(|(leader, party, refused)| Event::AgencyResult { leader, party, refused }),
-                        0x0109 => Some(Event::Chat { kind: ChatKind::Party, from: None, text: parse_party_chat(&data) }),
-                        0x017f => Some(Event::Chat { kind: ChatKind::Guild, from: None, text: parse_guild_chat(&data) }),
-                        0x098e => Some(Event::Chat { kind: ChatKind::Clan, from: None, text: parse_clan_chat(&data) }),
+                        0x0109 => Some(Event::Chat { kind: ChatKind::Party, from: None, text: parse_party_chat(&data), color: None }),
+                        0x017f => Some(Event::Chat { kind: ChatKind::Guild, from: None, text: parse_guild_chat(&data), color: None }),
+                        0x098e => Some(Event::Chat { kind: ChatKind::Clan, from: None, text: parse_clan_chat(&data), color: None }),
                         0x098a => parse_clan_info(&data).map(Event::ClanInfo),
                         0x0988 if data.len() >= 6 => Some(Event::ClanOnline(u16::from_le_bytes([data[2], data[3]]), u16::from_le_bytes([data[4], data[5]]))),
                         0x0989 => Some(Event::ClanLeft),
@@ -1737,7 +1737,7 @@ impl MapSession {
                         }
                         0x00b0 | 0x00b1 | 0x0acb => parse_par_change(opcode, &data).map(|(id, value)| Event::Stat { id, value }),
                         0x008d | 0x008e | 0x02c1 | 0x09de | 0x009a | 0x01c3 => {
-                            parse_chat(opcode, &data).map(|(kind, from, text)| Event::Chat { kind, from, text })
+                            parse_chat(opcode, &data).map(|(kind, from, text)| Event::Chat { kind, from, text, color: chat_colour(opcode, &data) })
                         }
                         id::ZC_NOTIFY_VANISH => {
                             let (id, reason) = parse_vanish(&data);

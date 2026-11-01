@@ -89,7 +89,8 @@ pub struct Hud {
     pub dialog_layout: DialogLayout,
     /// Floating notice across the upper screen (special popups): lines, colour, when shown.
     pub banner: Option<(Vec<String>, Color32, std::time::Instant)>,
-    chat: VecDeque<(ChatKind, String)>,
+    /// Chat lines: kind, text, and the colour a script asked for (else the kind's).
+    chat: VecDeque<(ChatKind, String, Option<Color32>)>,
     /// Names for item links in chat, by item id: (name, slots), filled in by the game from
     /// its item table. Ids the chat met without a name are left in `missing_links`.
     pub link_names: std::collections::HashMap<u32, (String, u8)>,
@@ -203,7 +204,12 @@ impl Hud {
     }
 
     pub fn push_chat(&mut self, kind: ChatKind, text: String) {
-        self.chat.push_back((kind, text));
+        self.push_chat_coloured(kind, text, None);
+    }
+
+    /// A chat line in the colour a script asked for (npctalk, announce), if any.
+    pub fn push_chat_coloured(&mut self, kind: ChatKind, text: String, rgb: Option<[u8; 3]>) {
+        self.chat.push_back((kind, text, rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b))));
         while self.chat.len() > CHAT_LINES {
             self.chat.pop_front();
         }
@@ -230,7 +236,7 @@ impl Hud {
         floaters: &[(glam::Vec2, String, Color32, f32)],
         bars: &[(glam::Vec2, f32)],
         casts: &[(glam::Vec2, f32)],
-        says: &[(glam::Vec2, String)],
+        says: &[(glam::Vec2, String, bool)],
     ) -> Option<String> {
         // Names under actors, outlined for readability on any background.
         let painter = ctx.layer_painter(egui::LayerId::background());
@@ -308,14 +314,19 @@ impl Hud {
             fill.set_width(rect.width() * frac.clamp(0.0, 1.0));
             painter.rect_filled(fill, 2.0, Color32::from_rgb(90, 200, 90));
         }
-        // showscript call-outs over heads, outlined like names.
-        for (feet, text) in says {
-            let p = egui::pos2(feet.x / ppp, feet.y / ppp - 118.0);
-            let font = FontId::proportional(15.0);
+        // Text over heads, outlined like names: speech (chat, npctalk) in white, wrapped as the
+        // original wraps it; showscript call-outs in gold.
+        for (feet, text, speech) in says {
+            let colour = if *speech { Color32::from_rgb(240, 240, 240) } else { Color32::from_rgb(255, 240, 160) };
+            let mut job = egui::text::LayoutJob::simple(text.clone(), FontId::proportional(15.0), colour, if *speech { 260.0 } else { f32::INFINITY });
+            // Centred rows are laid out around x = 0, so the galley is placed at the head's x.
+            job.halign = egui::Align::Center;
+            let galley = painter.layout_job(job);
+            let p = egui::pos2(feet.x / ppp, feet.y / ppp - 118.0 - galley.size().y);
             for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
-                painter.text(p + Vec2::new(dx, dy), egui::Align2::CENTER_BOTTOM, text, font.clone(), Color32::BLACK);
+                painter.galley_with_override_text_color(p + Vec2::new(dx, dy), galley.clone(), Color32::BLACK);
             }
-            painter.text(p, egui::Align2::CENTER_BOTTOM, text, font, Color32::from_rgb(255, 240, 160));
+            painter.galley(p, galley, colour);
         }
         if let Some(t) = &self.digit_text {
             let p = egui::pos2(ctx.content_rect().center().x, 70.0);
@@ -470,8 +481,8 @@ impl Hud {
                     .min_scrolled_height(if classic.is_some() { 150.0 } else { 0.0 })
                     .max_height(if classic.is_some() { 150.0 } else { ui.available_height() - input_h })
                     .show(ui, |ui| {
-                        for (kind, text) in &self.chat {
-                            let color = chat_color(*kind);
+                        for (kind, text, custom) in &self.chat {
+                            let color = custom.unwrap_or_else(|| chat_color(*kind));
                             if !text.contains("<ITEM") {
                                 ui.label(RichText::new(text).size(12.5).color(color));
                                 continue;

@@ -811,6 +811,19 @@ pub fn parse_chat(opcode: u16, data: &[u8]) -> Option<(ChatKind, Option<u32>, St
     })
 }
 
+/// The RGB colour a chat-like packet asks for, if it carries one. ZC_NPC_CHAT's colour is
+/// stored blue-green-red in a u32 (the server swaps it), so its bytes read red, green, blue;
+/// ZC_BROADCAST2 sends the script's 0xRRGGBB as is, so its bytes read blue, green, red.
+pub fn chat_colour(opcode: u16, data: &[u8]) -> Option<[u8; 3]> {
+    match opcode {
+        0x02c1 => data.get(8..11).map(|c| [c[0], c[1], c[2]]),
+        0x01c3 => data.get(4..7).map(|c| [c[2], c[1], c[0]]),
+        // ZC_BROADCAST's "blue" tag.
+        0x009a if data.get(4..8) == Some(b"blue") => Some([0, 255, 255]),
+        _ => None,
+    }
+}
+
 /// CZ_REQUEST_CHAT (GlobalMessage): the client sends "Name : text".
 pub struct CzChat<'a> {
     pub name: &'a str,
@@ -875,6 +888,19 @@ mod chat_tests {
         let n = p.len() as u16;
         p[2..4].copy_from_slice(&n.to_le_bytes());
         assert_eq!(parse_chat(0x008e, &p), Some((ChatKind::Public, None, "Tester : hi".into())));
+    }
+
+    #[test]
+    fn script_colours_read_as_rgb() {
+        // npctalk "...", ..., 0xFFAA66: the server swaps it to blue-green-red, 0x0066AAFF.
+        let mut npc = vec![0xc1, 0x02, 0, 0, 1, 0, 0, 0];
+        npc.extend_from_slice(&0x0066AAFFu32.to_le_bytes());
+        assert_eq!(chat_colour(0x02c1, &npc), Some([0xFF, 0xAA, 0x66]));
+        // mapannounce ..., "0xFFAA66": sent as is.
+        let mut bc = vec![0xc3, 0x01, 0, 0];
+        bc.extend_from_slice(&0x00FFAA66u32.to_le_bytes());
+        assert_eq!(chat_colour(0x01c3, &bc), Some([0xFF, 0xAA, 0x66]));
+        assert_eq!(chat_colour(0x008d, &bc), None);
     }
 }
 
