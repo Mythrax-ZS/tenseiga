@@ -204,6 +204,12 @@ int main() {
         writeln!(rs, "    ({id:#06x}, {len}),{c}")?;
     }
     writeln!(rs, "];\n")?;
+    writeln!(rs, "/// Names of the server -> client packets that have one, sorted by opcode.")?;
+    writeln!(rs, "pub static SERVER_NAMES: &[(u16, &str)] = &[")?;
+    for (id, (_, name)) in server.iter().filter(|(_, (_, name))| !name.is_empty()) {
+        writeln!(rs, "    ({id:#06x}, {name:?}),")?;
+    }
+    writeln!(rs, "];\n")?;
     writeln!(rs, "/// Client -> server, as the map server parses them. A handler may be reachable through")?;
     writeln!(rs, "/// several opcodes; `seq` is registration order, and the highest is the current one.")?;
     writeln!(rs, "pub static CLIENT: &[ClientPacket] = &[")?;

@@ -3612,7 +3612,16 @@ impl App {
                     self.hud.push_chat(ro_net::ChatKind::System, format!("[{name}] {text}"));
                 }
             }
-            RemoveEffect { .. } => {}
+            RemoveEffect { id, effect } => {
+                // removespecialeffect: stop that effect where it plays on the unit.
+                if let (Some(name), Some(pos)) = (fx::script_effect(effect), self.unit_pos(id)) {
+                    if let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) {
+                        if let Some(asset) = self.fx.get(r, vfs, name) {
+                            r.effects.retain(|e| e.asset != asset || e.pos.distance(pos) > ro_render::CELL);
+                        }
+                    }
+                }
+            }
             Notice(text) => self.hud.push_chat(ro_net::ChatKind::System, text),
             StyleResult(failed) => self.stylist.result(failed),
             MergeOpen(list) => self.merge.open = Some(list),

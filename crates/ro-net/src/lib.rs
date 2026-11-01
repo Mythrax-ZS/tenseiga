@@ -1,7 +1,7 @@
 //! Connection state machines for login -> char -> map.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -1011,6 +1011,7 @@ impl MapSession {
     ) -> anyhow::Result<MapExit> {
         let mut keepalive = tokio::time::interval(KEEPALIVE);
         let mut heard = tokio::time::Instant::now();
+        let mut unhandled = HashSet::new();
         loop {
             tokio::select! {
                 _ = keepalive.tick() => {
@@ -1109,8 +1110,7 @@ impl MapSession {
                         }
                         0x09fd | 0x09fe | 0x09ff => parse_unit(opcode, &data).map(Event::Unit),
                         0x00b4 | 0x00b5 | 0x00b6 | 0x00b7 | 0x0142 | 0x01d4 | 0x08d6 | 0x01b3 | 0x0ba1 | 0x0ba2 | 0x0ba3 | 0x0bb5 => parse_npc_dialog(opcode, &data).map(Event::Npc),
-                        // Inventory (invType 0 only; carts and storage come later).
-                        // Kafra storage: the same item lists with invType 2.
+                        // Kafra storage: the inventory's item lists with invType 2.
                         0x0b08 if data.get(4) == Some(&2) => Some(Event::StorageOpen),
                         0x0b09 | 0x0b39 if data.get(4) == Some(&2) => {
                             Some(Event::StorageItems(if opcode == 0x0b09 { parse_itemlist_normal(&data) } else { parse_itemlist_equip(&data) }))
@@ -1742,7 +1742,11 @@ impl MapSession {
                         0x00b3 if data[2] == 1 => return Ok(MapExit::CharSelect),
                         id::SC_NOTIFY_BAN => bail!("disconnected by map server, code {}", data[2]),
                         _ => {
-                            tracing::debug!(opcode = format_args!("{opcode:#06x}"), len = data.len(), "unhandled");
+                            // Once per opcode a session, so the log lists what's still missing.
+                            if unhandled.insert(opcode) {
+                                let name = ro_proto::server_name(opcode).unwrap_or("?");
+                                tracing::info!(opcode = format_args!("{opcode:#06x}"), name, len = data.len(), "unhandled packet");
+                            }
                             None
                         }
                     };

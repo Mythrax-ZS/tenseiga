@@ -25,4 +25,4 @@ pub mod table;
 
 pub use codec::{CodecError, Encode, Frame, RoCodec};
 pub use generated::{id, PACKETVER};
-pub use table::{client_packet, ClientPacket, PacketLen, PacketTable, ServerTable};
+pub use table::{client_packet, server_name, ClientPacket, PacketLen, PacketTable, ServerTable};

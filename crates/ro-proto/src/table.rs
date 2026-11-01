@@ -54,6 +54,12 @@ impl PacketTable for ServerTable {
     }
 }
 
+/// rAthena's name for a server -> client packet, when it has one.
+pub fn server_name(opcode: u16) -> Option<&'static str> {
+    let names = generated::SERVER_NAMES;
+    names.binary_search_by_key(&opcode, |&(op, _)| op).ok().map(|i| names[i].1)
+}
+
 /// The opcode the server currently expects for a handler (the most recent registration).
 pub fn client_packet(handler: &str) -> &'static ClientPacket {
     generated::CLIENT
@@ -76,5 +82,7 @@ mod tests {
         let enter = client_packet("WantToConnection");
         assert_eq!((enter.opcode, enter.len), (0x0436, 23));
         assert_eq!(client_packet("LoadEndAck").opcode, 0x007d);
+        assert_eq!(server_name(generated::id::ZC_ACCEPT_ENTER), Some("ZC_ACCEPT_ENTER"));
+        assert_eq!(server_name(0x0001), None);
     }
 }

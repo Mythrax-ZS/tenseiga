@@ -2,7 +2,8 @@
 
 Server packets rAthena can send at PACKETVER 20250402 that the client does not handle yet,
 found by comparing `ro-proto/src/generated.rs` with the opcodes in `ro-net` and `ro-proto`.
-Ticked items are handled and tested in game against the local server.
+Ticked items are handled and tested in game against the local server. While playing, the
+client's log names every packet it doesn't handle yet (`unhandled packet`, once per map session).
 
 ## Scripting (NPC script commands)
 - [x] ZC_SOUND (`soundeffect`), ZC_PLAY_NPC_BGM (`playBGM`)
@@ -12,7 +13,8 @@ Ticked items are handled and tested in game against the local server.
 - [x] ZC_DIALOG_TEXT_ALIGN / WINDOW_SIZE / WINDOW_POS / POS2 (ZC_SAY_DIALOG2 / WAIT_DIALOG2 are never sent by rAthena)
 - [x] ZC_MSG_COLOR, ZC_MSG_VALUE, ZC_MSG_SKILL, and every ZC_MSG id (was: only two)
 - [x] ZC_SPECIALPOPUP (System/spopup.lub: chat and/or floating banner), ZC_SKILLMSG
-- [x] ZC_REMOVE_EFFECT, ZC_EQUIPMENT_EFFECT
+- [x] ZC_EQUIPMENT_EFFECT
+- [~] ZC_REMOVE_EFFECT (`removespecialeffect`): stops a script effect still playing on the unit (was: read, then ignored); not yet tested in game
 - [x] ZC_NOTIFY_EFFECT3 (0x0284 / 0x0b69: effect plus green heal numbers)
 - [x] ZC_NPC_MARKET_OPEN / PURCHASE_RESULT (market shops)
 - [x] ZC_NPC_BARTER_MARKET_ITEMINFO / EXPANDED_BARTER (barter shops)
@@ -30,7 +32,7 @@ epute*.bson)
 ## Items and skills
 - [x] ZC_ACK_ITEMIDENTIFY (Magnifier) + ZC_AUTORUN_SKILL (all itemskill items)
 - [x] ZC_REPAIRITEMLIST / ACK_ITEMREPAIR (Weapon Repair list and result)
-- [~] ZC_ACK_WEAPONREFINE message; ZC_NOTIFY_WEAPONITEMLIST list still missing
+- [x] ZC_ACK_WEAPONREFINE message, ZC_NOTIFY_WEAPONITEMLIST (the Weapon Refine list window)
 - [x] ZC_ACK_REMEMBER_WARPPOINT (Warp Portal memo)
 - [x] ZC_EQUIP_ARROW, ZC_ACTION_FAILURE, ZC_ACK_ADDITEM_TO_CART, ZC_NOTIFY_MAPINFO, ZC_EQUIPITEM_DAMAGED
 - [x] ZC_ATTACK_RANGE, ZC_OVERWEIGHT_PERCENT, ZC_MAPPROPERTY_R2 (PvP/GvG: click enemy players to attack, Shift when the map requires it)

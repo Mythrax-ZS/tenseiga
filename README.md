@@ -4,8 +4,13 @@
 
 A from-scratch client for rAthena servers (formerly roclient), in Rust (wgpu: Vulkan / DX12 / GL).
 
-Status: login → character select → map entry → stay connected (headless). Rendering is a
-window that clears; map and sprite loading come next.
+Status: playable on a matching rAthena server: maps, sprites, effects, the game's windows,
+keyboard, mouse and controllers. Builds for Windows, Linux (AppImage, also for Steam Deck)
+and Android. What the original client does that this one doesn't yet is tracked in
+[docs/parity.md](docs/parity.md).
+
+The server it's developed against is [Tenseiga Athena](https://github.com/Mythrax-ZS/tenseiga-athena),
+a fork of rAthena with the Samurai job and the Twin Flames story; stock rAthena works too.
 
 ## Target
 
@@ -17,7 +22,7 @@ Add these lines to rAthena's `src/custom/defines_pre.hpp`:
 #undef PACKET_OBFUSCATION   // not implemented in the client yet
 ```
 
-and set `pincode_enabled: no` in `conf/char_athena.conf`.
+PIN codes (`pincode_enabled` in `conf/char_athena.conf`) are supported.
 
 ## Crates
 
@@ -25,11 +30,15 @@ and set `pincode_enabled: no` in `conf/char_athena.conf`.
 |---|---|
 | `ro-proto` | framing codec, packet encode/parse, generated packet table |
 | `ro-net` | login / char / map connection state machines |
-| `ro-vfs` | GRF 0x200 + loose `data/` folder |
+| `ro-vfs` | GRF (0x102 / 0x103, 0x200, 0x300) + loose `data/` folder |
+| `ro-formats` | parsers for the game's data files (maps, sprites, models, effects, Lua) |
+| `ro-game` | client-side game state: walking paths, items, looks, skills |
 | `ro-render` | wgpu renderer |
 | `ro-client` | the client binary, `tenseiga` |
 | `tools/packetgen` | regenerates `ro-proto/src/generated.rs` from rAthena |
 | `tools/grfdump` | list / extract GRF contents |
+| `tools/texpack` | builds the upscaled world texture pack ([docs/upscaling.md](docs/upscaling.md)) |
+| `tools/samurai_assets` | builds the Samurai's sprites, weapons and skill and status icons (Python) |
 
 ## Run
 
@@ -39,7 +48,8 @@ cargo run -p ro-client -- --headless          # protocol smoke test
 cargo run -p ro-client                        # window
 ```
 
-`RUST_LOG=debug` shows every packet that was skipped.
+The log names each server packet the client doesn't handle yet, once per map session
+(`unhandled packet`); `RUST_LOG=trace` shows every packet.
 
 ## Packet table
 
@@ -67,6 +77,11 @@ folder, any plain-text Lua with the same layout, whose entries override the stoc
 |---|---|---|
 | Items | `System/iteminfo.lub` | `System/itemInfo.lua`, `System/iteminfo_custom.lua` |
 | Quests | `System/OngoingQuestInfoList_True.lub` | `System/OngoingQuestInfoList_True.lua`, `System/questinfo_custom.lua` |
+
+`System/itemInfo.lua` may also be a loader that pulls in other files with `dofile` /
+`require`, like a translation pack's (ROenglishRE's `SystemEN`) or one that loads a
+server's `itemInfo_C.lua`; the client runs it the same way, and reads `tbl` plus any
+`tbl_*` tables (such as `tbl_custom`) it ends up with.
 
 Write them in CP949 (EUC-KR), like the originals:
 
