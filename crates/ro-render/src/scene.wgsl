@@ -149,7 +149,9 @@ fn fs_main(in: VsOut) -> FsOut {
     let tilted = g.ambient.rgb + g.diffuse.rgb * max(dot(n, -g.light_dir.xyz), 0.0);
     let shade = clamp(tilted / max(g.ambient.rgb + g.diffuse.rgb * ndl, vec3(0.05)), vec3(0.5), vec3(1.5));
     let rgb = clamp(t.rgb * in.color * light * shade + lm.rgb, vec3(0.0), vec3(1.0));
-    let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) + srgb_to_linear(t.rgb * in.color) * point_light(in.world, n)) * torch_shadows(in.world);
+    let pl = point_light(in.world, n);
+    // The torch light baked into the lightmap wavers with the flame.
+    let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) * (1.0 + pl.w) + srgb_to_linear(t.rgb * in.color) * pl.rgb) * torch_shadows(in.world);
     return FsOut(vec4(lit, 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
 }
 
@@ -231,9 +233,11 @@ fn torch_shadow(i: i32, map: texture_depth_2d, world: vec3<f32>) -> f32 {
 }
 
 // Light from the map's light sources (torches, lamps): smooth falloff to their range,
-// half-wrapped around surfaces so lamps also light what is beside them.
-fn point_light(world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+// half-wrapped around surfaces so lamps also light what is beside them. w: how much brighter
+// or darker flickering flames make it here (the colour's w is each light's swing).
+fn point_light(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     var sum = vec3(0.0);
+    var flicker = 0.0;
     let count = i32(g.sprite_light.w);
     for (var i = 0; i < count; i++) {
         let l = g.lights[i * 2];
@@ -242,8 +246,9 @@ fn point_light(world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         let f = saturate(1.0 - d / max(l.w, 1.0));
         let wrap = saturate(dot(n, to / max(d, 1e-3)) * 0.5 + 0.5);
         sum += g.lights[i * 2 + 1].rgb * f * f * wrap;
+        flicker += g.lights[i * 2 + 1].w * f * f;
     }
-    return sum * g.sprite_light.z;
+    return vec4(sum, clamp(flicker * 0.6, -0.3, 0.3)) * g.sprite_light.z;
 }
 
 /// Indoors, only the room the player is in is drawn (other rooms share the map).

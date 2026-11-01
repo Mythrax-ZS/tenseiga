@@ -115,7 +115,10 @@ All six roadmap items are implemented:
    neighbour toward the sun is transparent.
 2. **Point lights**. RSW light sources (colour floats, range; position centred like models,
    y flipped) go to the renderer. The 32 nearest the camera ride in the globals and light
-   ground and models (half-wrapped, smooth falloff) and sprites.
+   ground and models (half-wrapped, smooth falloff) and sprites. Fire-coloured ones (red over
+   green over blue) flicker by up to a quarter on three sine beats of their own, and so does
+   the torch light baked into the lightmaps around them (most of a torch's light is baked; the
+   live light alone is too dim for a flicker to show).
 3. **Fog and god rays** (`post.wgsl`). Fog: linear distance from the depth-info target
    blends toward a pale sky tinted by the map ambient, from 1.15x to 2.6x the camera
    distance. God rays: the bloom bright pass is marched toward the sun's screen
@@ -135,6 +138,6 @@ the same names).
 
 ### Ideas beyond this
 
-- Light flicker on fire-coloured sources, and small additive glow sprites on light positions.
+- Small additive glow sprites on light positions.
 - Baked per-vertex AO for models (cheaper and steadier than screen-space AO).
 - Nearest-neighbour sprite sampling at high zoom.
