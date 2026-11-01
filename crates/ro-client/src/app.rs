@@ -178,6 +178,8 @@ struct Look {
     male: bool,
     hair: u16,
     hair_color: u16,
+    /// Body dye (jobs::body_palette).
+    clothes_color: u16,
     gear: ro_net::Look,
 }
 
@@ -202,7 +204,7 @@ fn load_character(
     let pal_dir = if race == "도람족" { "palette\\도람족\\머리" } else { "palette\\머리" };
     let appearance = jobs::appearance(&look.job, look.male)
         .with_context(|| format!("{} has no {} sprite package", look.job, if look.male { "male" } else { "female" }))?;
-    let body = sheet(&appearance.body, None)?;
+    let body = sheet(&appearance.body, jobs::body_palette(&look.job, look.male, look.clothes_color))?;
     let head = if appearance.attachments { Some(sheet(
         &format!("data\\sprite\\{race}\\머리통\\{sex}\\{}_{sex}", look.hair),
         (look.hair_color > 0).then(|| format!("data\\{pal_dir}\\머리{}_{sex}_{}.pal", look.hair, look.hair_color)),
@@ -1442,7 +1444,7 @@ impl App {
 
     /// Actor template for a player look, cached so sheets upload once per look.
     fn player_actor(&mut self, look: &Look) -> Option<ro_render::Actor> {
-        let key = format!("player:{}:{}:{}:{}:{:?}", look.job, look.male, look.hair, look.hair_color, look.gear);
+        let key = format!("player:{}:{}:{}:{}:{}:{:?}", look.job, look.male, look.hair, look.hair_color, look.clothes_color, look.gear);
         if let Some(a) = self.sprites.get(&key) {
             return a.clone();
         }
@@ -1559,7 +1561,7 @@ impl App {
                 }
             }
         }
-        let want = preview::Look { job: look.job.clone(), male: look.male, hair: look.hair.max(1), hair_color: look.hair_color, headgear };
+        let want = preview::Look { job: look.job.clone(), male: look.male, hair: look.hair.max(1), hair_color: look.hair_color, clothes_color: look.clothes_color, headgear };
         if self.portrait.as_ref().is_some_and(|p| p.0 == want) {
             return;
         }
@@ -1622,6 +1624,7 @@ impl App {
             4 => look.gear.head_top = value as u16,
             5 => look.gear.head_mid = value as u16,
             6 => look.hair_color = value as u16,
+            7 => look.clothes_color = value as u16,
             _ => return,
         }
         let Some(fresh) = self.player_actor(&look) else { return };
@@ -1669,6 +1672,7 @@ impl App {
             male: info.sex == 1,
             hair: info.hair.max(1),
             hair_color: info.hair_color.max(0) as u16,
+            clothes_color: info.clothes_color.max(0) as u16,
             gear: info.look,
         });
         let actor = match &look {
@@ -1851,6 +1855,7 @@ impl App {
                     male: character.sex == 1,
                     hair: character.head.max(1) as u16,
                     hair_color: character.hair_color as u16,
+                    clothes_color: character.clothes_color.max(0) as u16,
                     gear: character.look,
                 };
                 let s = &mut self.hud.status;
@@ -3572,6 +3577,7 @@ impl App {
                         job: class as i16,
                         hair: 0,
                         hair_color: 0,
+                        clothes_color: 0,
                         look: Default::default(),
                         sex: 0,
                         name: m.name.clone(),
@@ -8411,7 +8417,7 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         distance: arg("--distance").and_then(|d| d.parse().ok()),
         yaw: arg("--yaw").and_then(|d| d.parse().ok()),
         pitch: arg("--pitch").and_then(|d| d.parse().ok()),
-        look: Look { job: arg("--job").unwrap_or_else(|| "초보자".into()), male: arg("--sex").is_none_or(|s| s != "f"), hair: 1, hair_color: 0, gear: ro_net::Look { weapon: arg("--weapon").and_then(|w| w.parse().ok()).unwrap_or(0), shield: arg("--shield").and_then(|w| w.parse().ok()).unwrap_or(0), ..Default::default() } },
+        look: Look { job: arg("--job").unwrap_or_else(|| "초보자".into()), male: arg("--sex").is_none_or(|s| s != "f"), hair: 1, hair_color: 0, clothes_color: arg("--dye").and_then(|d| d.parse().ok()).unwrap_or(0), gear: ro_net::Look { weapon: arg("--weapon").and_then(|w| w.parse().ok()).unwrap_or(0), shield: arg("--shield").and_then(|w| w.parse().ok()).unwrap_or(0), ..Default::default() } },
         action: arg("--action").and_then(|a| a.parse().ok()).unwrap_or(0),
         dir: arg("--dir").and_then(|d| d.parse::<usize>().ok()).unwrap_or(0) % 8,
         capture_after: arg("--capture-after").and_then(|d| d.parse().ok()).unwrap_or(0.0),
@@ -8701,6 +8707,9 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         if !db.is_empty() {
             tracing::info!(items = db.len(), "loaded item info");
             app.item_db = Some(db);
+        }
+        if let Some(src) = read(customdata::CUSTOMJOBS_SOURCE) {
+            jobs::set_custom(customdata::custom_jobs(&src, customdata::CUSTOMJOBS_SOURCE));
         }
         let info = |n: &str| read(&format!(r"data\luafiles514\lua files\datainfo\{n}.lub"));
         if let (Some(a), Some(b), Some(c)) = (info("accessoryid"), info("accname"), info("weapontable")) {

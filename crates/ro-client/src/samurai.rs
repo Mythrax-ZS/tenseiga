@@ -187,10 +187,10 @@ mod tests {
         assert!(!appearance.attachments);
         assert!(crate::jobs::appearance(SPRITE, false).is_none());
         let vfs = ro_vfs::Vfs::new(vec![overlay_path().unwrap()], None, vec![]);
-        let look = crate::preview::Look { job: SPRITE.into(), male: true, hair: 99, hair_color: 17, headgear: vec!["missing_hat".into()] };
+        let look = crate::preview::Look { job: SPRITE.into(), male: true, hair: 99, hair_color: 17, clothes_color: 3, headgear: vec!["missing_hat".into()] };
         let portrait = crate::preview::compose(&vfs, &look).expect("full-body preview without GRFs");
         assert!(portrait.pixels.iter().any(|p| p.a() != 0));
-        let plain = crate::preview::compose(&vfs, &crate::preview::Look { hair: 1, hair_color: 0, headgear: vec![], ..look.clone() }).unwrap();
+        let plain = crate::preview::compose(&vfs, &crate::preview::Look { hair: 1, hair_color: 0, clothes_color: 0, headgear: vec![], ..look.clone() }).unwrap();
         assert_eq!(portrait.pixels, plain.pixels);
         assert!(crate::preview::compose(&vfs, &crate::preview::Look { male: false, ..look }).is_none());
     }

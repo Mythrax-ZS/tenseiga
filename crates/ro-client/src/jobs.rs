@@ -197,16 +197,42 @@ pub fn is_fourth(job: i16) -> bool {
     (4252..=4316).contains(&job)
 }
 
+/// Job ids reserved for custom jobs (rAthena's JOB_CUSTOM_START..JOB_CUSTOM_END): the
+/// Samurai, then whatever a server lists in System\customjobs.lua.
+pub const CUSTOM: std::ops::RangeInclusive<i16> = 4500..=4599;
+
+/// The server's custom jobs (id, sprite name, display name), read once the game data is open.
+static CUSTOM_JOBS: std::sync::OnceLock<Vec<(i16, &'static str, &'static str)>> = std::sync::OnceLock::new();
+
+/// Takes the custom jobs a server ships (customdata::custom_jobs). Built-in jobs keep theirs.
+pub fn set_custom(jobs: Vec<(i16, String, String)>) {
+    let leaked = jobs.into_iter().map(|(id, sprite, name)| (id, &*sprite.leak(), &*name.leak())).collect();
+    let _ = CUSTOM_JOBS.set(leaked);
+}
+
+fn find(job: i16) -> Option<&'static (i16, &'static str, &'static str)> {
+    JOBS.iter().chain(CUSTOM_JOBS.get().into_iter().flatten()).find(|j| j.0 == job)
+}
+
 pub fn is_player(job: i16) -> bool {
-    job < 45 || (4001..4400).contains(&job) || job == crate::samurai::JOB
+    job < 45 || (4001..4400).contains(&job) || CUSTOM.contains(&job)
 }
 
 pub fn sprite(job: i16) -> &'static str {
-    JOBS.iter().find(|j| j.0 == job).map_or("초보자", |j| j.1)
+    find(job).map_or("초보자", |j| j.1)
 }
 
 pub fn title(job: i16) -> &'static str {
-    JOBS.iter().find(|j| j.0 == job).map_or("Adventurer", |j| j.2)
+    find(job).map_or("Adventurer", |j| j.2)
+}
+
+/// A job's body dye: clothes colour `n` (0: the sprite's own colours) is
+/// data\palette\몸\{sprite}_{sex}_{n}.pal, Doram's in palette\도람족\body. Servers add palettes
+/// by number for any job, custom ones included.
+pub fn body_palette(sprite: &str, male: bool, n: u16) -> Option<String> {
+    let sex = if male { "남" } else { "여" };
+    let dir = if race_dir(sprite) == "도람족" { r"palette\도람족\body" } else { r"palette\몸" };
+    (n > 0).then(|| format!(r"data\{dir}\{sprite}_{sex}_{n}.pal"))
 }
 
 /// Folder holding a job's weapon sprites. Transcended and mounted variants have their own
@@ -239,4 +265,22 @@ pub fn weapon_dir(sprite: &str) -> &str {
 /// Doram jobs keep their sprites under 도람족 instead of 인간족.
 pub fn race_dir(sprite: &str) -> &'static str {
     if matches!(sprite, "summoner" | "spirit_handler" | "cart_summoner") { "도람족" } else { "인간족" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn body_palettes_are_named_after_the_job_sprite() {
+        assert_eq!(body_palette("어세신", true, 3).as_deref(), Some(r"data\palette\몸\어세신_남_3.pal"));
+        assert_eq!(body_palette("summoner", false, 120).as_deref(), Some(r"data\palette\도람족\body\summoner_여_120.pal"));
+        assert_eq!(body_palette("samurai", true, 0), None);
+    }
+
+    #[test]
+    fn the_custom_range_is_players() {
+        assert!(is_player(crate::samurai::JOB) && is_player(4599) && !is_player(4600));
+        assert_eq!(title(crate::samurai::JOB), "Samurai");
+    }
 }

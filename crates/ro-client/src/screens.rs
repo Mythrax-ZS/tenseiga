@@ -430,7 +430,7 @@ impl Front {
                 }
             }
         }
-        preview::Look { job: (c.job_sprite)(ch.job).to_string(), male: ch.sex == 1, hair: ch.head.max(1) as u16, hair_color: ch.hair_color as u16, headgear }
+        preview::Look { job: (c.job_sprite)(ch.job).to_string(), male: ch.sex == 1, hair: ch.head.max(1) as u16, hair_color: ch.hair_color as u16, clothes_color: ch.clothes_color.max(0) as u16, headgear }
     }
 
     /// Draws the current screen.
@@ -825,7 +825,7 @@ impl Front {
     fn create(&mut self, ctx: &egui::Context, c: &Ctx, slot: u8) -> Option<Action> {
         let mut action = None;
         let job = if self.summoner { "summoner" } else { "초보자" };
-        let look = preview::Look { job: job.into(), male: self.male, hair: self.hair, hair_color: self.hair_color, headgear: vec![] };
+        let look = preview::Look { job: job.into(), male: self.male, hair: self.hair, hair_color: self.hair_color, clothes_color: 0, headgear: vec![] };
         let tex = self.preview(ctx, c, look);
         crate::classic::show(ctx, egui::Window::new("Make Character").collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, Vec2::new(0.0, 30.0)), "Make Character", false, |ui| {
             ui.horizontal(|ui| {

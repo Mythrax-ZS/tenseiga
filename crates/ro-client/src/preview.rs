@@ -12,6 +12,8 @@ pub struct Look {
     pub male: bool,
     pub hair: u16,
     pub hair_color: u16,
+    /// Body dye (jobs::body_palette).
+    pub clothes_color: u16,
     /// Headgear sprite names (악세사리), already resolved.
     pub headgear: Vec<String>,
 }
@@ -79,7 +81,7 @@ pub fn compose(vfs: &ro_vfs::Vfs, look: &Look) -> Option<egui::ColorImage> {
     let race = crate::jobs::race_dir(&look.job);
     let pal_dir = if race == "도람족" { "palette\\도람족\\머리" } else { "palette\\머리" };
     let appearance = crate::jobs::appearance(&look.job, look.male)?;
-    let body = load(vfs, &appearance.body, None)?;
+    let body = load(vfs, &appearance.body, crate::jobs::body_palette(&look.job, look.male, look.clothes_color))?;
     let head = if appearance.attachments { load(
         vfs,
         &format!("data\\sprite\\{race}\\머리통\\{sex}\\{}_{sex}", look.hair),

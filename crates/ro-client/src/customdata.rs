@@ -105,8 +105,42 @@ pub fn questinfo(src: &[u8], name: &str) -> Vec<(u32, QuestText)> {
     out
 }
 
+/// A server's custom jobs (job ids in `jobs::CUSTOM`).
+pub const CUSTOMJOBS_SOURCE: &str = r"System\customjobs.lua";
+
+/// Runs a custom jobs file (`CustomJobs = { [id] = { sprite = "...", name = "..." } }`): each
+/// job's sprite name (its body, weapon and palette files are named after it, as for stock
+/// jobs) and display name.
+pub fn custom_jobs(src: &[u8], name: &str) -> Vec<(i16, String, String)> {
+    let lua = Lua::new();
+    if let Err(e) = lua.load(src).set_name(name).exec() {
+        tracing::warn!("{name}: {e}");
+        return vec![];
+    }
+    let Ok(list) = lua.globals().get::<Table>("CustomJobs") else { return vec![] };
+    let text = |t: &Table, k: &str| match t.get::<Value>(k) {
+        Ok(Value::String(s)) => encoding_rs::EUC_KR.decode(&s.as_bytes()).0.into_owned(),
+        _ => String::new(),
+    };
+    let out: Vec<_> = list
+        .pairs::<i64, Table>()
+        .filter_map(Result::ok)
+        .filter(|(id, _)| crate::jobs::CUSTOM.contains(&(*id as i16)))
+        .map(|(id, t)| (id as i16, text(&t, "sprite"), text(&t, "name")))
+        .filter(|(_, sprite, _)| !sprite.is_empty())
+        .collect();
+    tracing::info!(jobs = out.len(), "{name}");
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn custom_jobs_need_a_sprite_and_an_id_in_the_range() {
+        let src = "CustomJobs = { [4501] = { sprite = \"ronin\", name = \"Ronin\" }, [4502] = { name = \"No sprite\" }, [4001] = { sprite = \"x\" } }";
+        assert_eq!(super::custom_jobs(src.as_bytes(), "test"), [(4501, "ronin".to_string(), "Ronin".to_string())]);
+    }
+
     #[test]
     fn saga_quests_know_where_to_go() {
         let src = include_bytes!("../../../overlays/samurai/System/samurai_questinfo.lua");

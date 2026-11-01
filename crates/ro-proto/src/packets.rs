@@ -380,6 +380,8 @@ pub struct CharInfo {
     pub name: String,
     pub slot: u8,
     pub hair_color: u8,
+    /// Body dye (bodypalette): the clothes colour, 0 for none.
+    pub clothes_color: i16,
     pub map: String,
     pub sex: u8,
     /// Seconds until a pending deletion can be confirmed; 0 when none is pending.
@@ -412,7 +414,8 @@ pub fn parse_char_info(mut b: &[u8]) -> CharInfo {
     let shield = b.get_i16_le() as u16 as u32;
     let head_top = b.get_i16_le() as u16;
     let head_mid = b.get_i16_le() as u16;
-    b.advance(4); // palettes
+    b.advance(2); // head palette (hair_color, again)
+    let clothes_color = b.get_i16_le();
     let look = Look { weapon: weapon as u16 as u32, shield, head_top, head_mid, head_bottom };
     let name = get_fixed_str(&mut b, 24);
     b.advance(6); // stats
@@ -425,7 +428,7 @@ pub fn parse_char_info(mut b: &[u8]) -> CharInfo {
     let moves = b.get_u32_le();
     let can_rename = b.get_u32_le() != 0;
     let sex = b.get_u8();
-    CharInfo { char_id, base_exp, zeny, job_level, hp, max_hp, sp, max_sp, job, head, base_level, speed, look, name, slot, hair_color, map, sex, delete_date, can_rename, moves }
+    CharInfo { char_id, base_exp, zeny, job_level, hp, max_hp, sp, max_sp, job, head, base_level, speed, look, name, slot, hair_color, clothes_color, map, sex, delete_date, can_rename, moves }
 }
 
 /// 0x006b: 3 + 20 bytes of header data, then characters.
@@ -600,6 +603,8 @@ pub struct UnitInfo {
     pub job: i16,
     pub hair: u16,
     pub hair_color: i16,
+    /// Body dye: the clothes colour, 0 for none.
+    pub clothes_color: i16,
     pub look: Look,
     pub sex: u8,
     pub name: String,
@@ -649,6 +654,7 @@ pub fn parse_unit(opcode: u16, data: &[u8]) -> Option<UnitInfo> {
         job: i16_at(23),
         hair: u16_at(25),
         hair_color: i16_at(palette_at),
+        clothes_color: i16_at(palette_at + 2),
         look: Look {
             weapon: u32_at(27),
             shield: u32_at(31),
