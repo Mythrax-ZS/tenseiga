@@ -204,8 +204,14 @@ never committed. The result, with any hand corrections, is
 `artwork/head_cut.json`: per frame `centre_window` bounds the fit, `cut` and
 `keep` rectangles add to or protect from the cut, `keep_outline` protects convex
 outlines of points (arms raised past the head, shoulders under the hair), and
-`anchor_override` replaces the anchor. `build` cuts the head and hair out, fills
-the coat they covered, carries that cut to the official-size body, sets each
+`anchor_override` replaces the anchor, and `upper_body_from` gives a frame drawn
+apart from its cycle another frame's upper body, sash on sash (the two repair
+poses of the south walk, smaller and lower than the rest). `build` cuts the head
+and hair out, fills the coat they covered, carries that cut to the official-size
+body, steadies the walk (each frame's torso is matched against the steadiest one
+and moved, rows at the hips taken out or repeated so the feet stay put, until it
+holds one line and bobs as official bodies do), gives the body back the neck the
+cut took with the head (only where the body starts just under it), sets each
 frame's anchor to its neck less the official offset (so mirrored frames seat
 heads as their own direction does), and writes an indexed body with one palette
 range per material, the clothes dyes, hairstyle 43 and its hair colours, and

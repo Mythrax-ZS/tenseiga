@@ -38,8 +38,8 @@
     "installed_starter_act_matches_rebuild": true
   },
   "sha256": {
-    "data/sprite/custom/samurai/ember_ronin.spr": "5d65e12bc7d46e346a0be2682f63893b7897a2b8e7321725cd36c3270e157b87",
-    "data/sprite/custom/samurai/ember_ronin.act": "7c826792bbb0a620bd4e424e9f60e74d794812638e507b9a5d7c4e8cf4044f20",
+    "data/sprite/custom/samurai/ember_ronin.spr": "cf0430453608652bab974551e8579dda691b1c72da28ae2668b740a2944a07eb",
+    "data/sprite/custom/samurai/ember_ronin.act": "aeceb9d4deec98ec8e2f242ba48b255e4a187d5cacfcf388123586dcf915656d",
     "data/sprite/custom/samurai/katana.spr": "82bb15bdf204d4d5bfccbe0510a8e2b6212a13e7dcd4d9fd0adc57e0409b0079",
     "data/sprite/custom/samurai/katana.act": "30da21035438e35f0b2e57a23518385632bb5afb5753e2d24f111c9c799bead0",
     "data/sprite/custom/samurai/katana_offhand.spr": "82bb15bdf204d4d5bfccbe0510a8e2b6212a13e7dcd4d9fd0adc57e0409b0079",
@@ -94,5 +94,6 @@
     "origin": "The original artwork's drawn head and ponytail, cut out by tools/samurai_assets/separate_head.py; hair colours take the shades of the official hair palettes."
   },
   "body_dyes": "data/palette/몸/samurai_남_1..7.pal, generated from the body's indexed palette",
-  "body_proportions": "Drawn for its own bigger head, the artwork stood 52 px from neck to feet with its feet on the ground origin; official male bodies stand 66-71 px and plant their feet 5-10 px below it. build.json's body_scale samples the body 1.15x across and 1.3x down from the source sheets and ground_drop lowers each direction to the official bodies' median feet line; weapon grips follow and blades keep their size. The head is still cut at the artwork's own size (hairstyle 43 is unchanged) and the cut carried to the larger body. Head anchors are the neck less the official heads' per-frame offsets (artwork/head_cut.json neck_offsets), so mirrored frames seat official heads as their own direction does."
+  "body_proportions": "Drawn for its own bigger head, the artwork stood 52 px from neck to feet with its feet on the ground origin; official male bodies stand 66-71 px and plant their feet 5-10 px below it. build.json's body_scale samples the body 1.15x across and 1.3x down from the source sheets and ground_drop lowers each direction to the official bodies' median feet line; weapon grips follow and blades keep their size. The head is still cut at the artwork's own size (hairstyle 43 is unchanged) and the cut carried to the larger body. Head anchors are the neck less the official heads' per-frame offsets (artwork/head_cut.json neck_offsets), so mirrored frames seat official heads as their own direction does.",
+  "walk_and_neck": "Walking, each drawn frame had placed the torso (and the head on it) up to 3 px apart from the others across and 4 px up and down, and facing south two separately drawn repair poses stood smaller and lower: the shoulders shrank, dropped and shifted every step. separate_head.py matches each walk frame's upper body against the steadiest one and moves it so the torso holds one line and bobs 0-2 px with the stride, as official bodies do; the repair poses take their neighbours' upper bodies (head_cut.json upper_body_from). The cut also took the neck with the head, leaving background between chin and collar in side views: the body gets back a neck reaching 5 px up under the head where the body starts just below it."
 }

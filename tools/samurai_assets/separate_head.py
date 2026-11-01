@@ -317,7 +317,7 @@ def fit(compiled, reference, cuts_path):
                 k = FRONT_DROP if a % 8 in (0, 1, 2) else BACK_DROP
                 entry["drop"] = [int(round(u[0] * k)), int(round(u[1] * k))]
             # Hand corrections survive refits.
-            for key in ("centre_window", "anchor_override", "cut", "keep", "keep_outline", "note"):
+            for key in ("centre_window", "anchor_override", "cut", "keep", "keep_outline", "upper_body_from", "note"):
                 if key in kept:
                     entry[key] = kept[key]
             cuts["images"].append(entry)
@@ -805,6 +805,231 @@ def rescale_body(big, big_grid, native, native_grid, removed, painted, model):
     return out
 
 
+# ---------------------------------------------------------------- the neck and the walk
+
+
+# How far the body reaches up under a player's head, past where the head's bottom meets it, and
+# the neck's half width. Official bodies' necks and collars run 3 to 7 px up under head 2; the
+# cut left the Samurai's level with its bottom or short of it, a seam of background under the chin.
+NECK_REACH = 5
+NECK_HALF_WIDTH = 4
+# A column gets a neck only where the body starts at most this far below the neck point; further
+# down the head is bowed or thrown clear of the body (pickup, lunges), and a neck would hang in
+# the air beside it.
+NECK_GAP = 2
+
+
+def neck_colours(images):
+    """(skin, its outline) for necks seen from the front or side, and the collar's (charcoal,
+    its outline) for necks seen from behind, from the body's own colours."""
+    skin, coat = [], []
+    for img in images:
+        opaque, sk, red, gold, light = classes(img)
+        skin.append(img[sk][:, :3])
+        coat.append(img[opaque & ~sk & ~red & ~gold & ~light][:, :3])
+    out = []
+    for px in (np.concatenate(skin), np.concatenate(coat)):
+        inner = np.median(px, 0)
+        out.append((inner.round().astype(np.uint8), (inner * 0.55).round().astype(np.uint8)))
+    return out
+
+
+def neck_stub(img, neck, colours):
+    """The neck the cut took with the head: NECK_REACH px up past the neck point, from the body's
+    top in the columns either side of it, outlined at its sides. The head hides all but a sliver
+    beside the chin; without it background showed between head and collar."""
+    out = img.copy()
+    opaque = out[..., 3] >= 128
+    h, w = opaque.shape
+    nx, ny = neck
+    top = int(math.floor(ny)) - NECK_REACH
+    x0, x1 = int(round(nx - NECK_HALF_WIDTH)), int(round(nx + NECK_HALF_WIDTH))
+    if top < 0:
+        return out
+    inner, edge = colours
+    for x in range(max(x0, 0), min(x1, w)):
+        below = np.nonzero(opaque[top:min(int(math.floor(ny)) + NECK_GAP + 1, h), x])[0]
+        if len(below) and below[0] > 0:
+            out[top:top + below[0], x, :3] = edge if x in (x0, x1 - 1) else inner
+            out[top:top + below[0], x, 3] = 255
+    return out
+
+
+def sash(img, neck):
+    """(last row, centre column) of the sash: the rows below the neck where red runs across the
+    middle of the torso."""
+    opaque, skin, red, gold, light = classes(img)
+    rows = []
+    for y in range(int(neck[1]) + 4, min(int(neck[1]) + 30, img.shape[0])):
+        cols = np.nonzero(opaque[y])[0]
+        if len(cols):
+            mid = (cols.min() + cols.max()) // 2
+            if red[y, max(mid - 8, 0):mid + 9].sum() >= 9:
+                rows.append((y, (cols.min() + cols.max()) / 2))
+    if not rows:
+        raise ValueError("No sash below the neck")
+    return rows[-1][0], float(np.median([c for _, c in rows]))
+
+
+def upper_body_from(dst, dst_neck, src, src_neck):
+    """`dst` with `src`'s upper body, sash on sash: everything above dst's sash's last row is src's,
+    moved so the sashes meet. Returns (image, the move of dst's centre, the new neck); the image
+    grows (even sizes) where src's shoulders stand wider or higher."""
+    (dy0, dc), (sy0, sc) = sash(dst, dst_neck), sash(src, src_neck)
+    mx, my = int(round(dc - sc)), dy0 - sy0
+    dh, dw = dst.shape[:2]
+    sh_, sw = src.shape[:2]
+    # One canvas in dst's coordinates, room for src wherever it lands.
+    x0, y0 = min(0, mx), min(0, my)
+    x1, y1 = max(dw, mx + sw), max(dh, my + sh_)
+    canvas = np.zeros((y1 - y0, x1 - x0, 4), np.uint8)
+    canvas[-y0:-y0 + dh, -x0:-x0 + dw] = dst
+    cut = dy0 + 1 - y0
+    moved = np.zeros_like(canvas)
+    moved[my - y0:my - y0 + sh_, mx - x0:mx - x0 + sw] = src
+    canvas[:cut] = moved[:cut]
+    ys, xs = np.nonzero(canvas[..., 3] >= 128)
+    top, bottom, left, right = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    bottom += (bottom - top) % 2
+    right += (right - left) % 2
+    out = np.zeros((bottom - top, right - left, 4), np.uint8)
+    part = canvas[top:bottom, left:right]
+    out[:part.shape[0], :part.shape[1]] = part
+    # The layer centre moves by the shift of the image's centre, in dst's coordinates.
+    centre = ((left + x0 + (right - left) / 2) - dw / 2, (top + y0 + (bottom - top) / 2) - dh / 2)
+    neck = (src_neck[0] + mx - x0 - left, src_neck[1] + my - y0 - top)
+    return out, centre, neck
+
+
+# Walking: each frame's torso is matched in a box under the neck (half width, rows above and
+# below it), searched this far either way (across, down).
+WALK_BOX = (16, 4, 10)
+WALK_SEARCH = (5, 6)
+# The bob the torso follows, px down from the top of the step: highest with the feet together
+# (frames 0 and 4), lowest at the longest stride (2 and 6), as official bodies (0, 1, 3, 2).
+WALK_BOB = (0, 1, 2, 1, 0, 1, 2, 1)
+
+
+def copy_actions(acts):
+    """Actions with their own frames and layers, to change without touching the originals."""
+    return [dict(action, frames=[dict(fr, layers=[dict(l) for l in fr["layers"]]) for fr in action["frames"]])
+            for action in acts]
+
+
+def walk_offsets(canvases, necks):
+    """Per frame, where its torso is relative to the steadiest frame's (the one the others match
+    best), and that frame's index. `canvases` are the frames drawn in actor space; `necks` their
+    neck points there."""
+    hw, up, down = WALK_BOX
+    sx, sy = WALK_SEARCH
+    best = None
+    for r, ref in enumerate(canvases):
+        nx, ny = (int(round(v)) for v in necks[r])
+        box = ref[ny - up:ny + down, nx - hw:nx + hw + 1]
+        seen = box[..., 3] >= 128
+        found, total = [], 0.0
+        for img in canvases:
+            scores = []
+            for dy in range(-sy, sy + 1):
+                for dx in range(-sx, sx + 1):
+                    win = img[ny - up + dy:ny + down + dy, nx - hw + dx:nx + hw + 1 + dx]
+                    there = win[..., 3] >= 128
+                    both = seen & there
+                    colour = np.abs(box[..., :3].astype(np.int32) - win[..., :3]).mean(-1) / 255
+                    score = ((seen ^ there).sum() + colour[both].sum()) / max((seen | there).sum(), 1)
+                    scores.append((score, abs(dx) + abs(dy), dx, dy))
+            score, _, dx, dy = min(scores)
+            found.append((dx, dy))
+            total += score
+        if best is None or total < best[0]:
+            best = (total, r, found)
+    return best[2], best[1]
+
+
+def respace_rows(img, start, end, change):
+    """`img` with `change` rows dropped (positive) or repeated (negative), spread evenly over
+    rows start..end."""
+    n = abs(change)
+    if not n:
+        return img
+    if end - start < 2 * n:
+        raise ValueError(f"Rows {start}..{end} are too few to take {change:+d}")
+    picks = {start + int((k + 0.5) * (end - start) / n) for k in range(n)}
+    rows = []
+    for y in range(img.shape[0]):
+        if y in picks and change > 0:
+            continue
+        rows.append(img[y])
+        if y in picks:
+            rows.append(img[y])
+    return np.stack(rows)
+
+
+def steady_walk(acts, images, necks):
+    """Walking, the torso was drawn a little differently in every frame: it wandered a couple of
+    px across and up and down, the head with it. Each frame is matched by its upper body against
+    the steadiest one and moved so the torso holds one line and bobs as official bodies do:
+    across, the whole frame moves; up and down, rows at the hips are dropped or repeated so the
+    feet stay put. The head rides the torso: every frame's neck is where the frames' necks sit
+    on it, on the median.
+
+    Returns new (actions, images, necks); images are only those walking draws."""
+    acts = copy_actions(acts)
+    images, necks = list(images), list(necks)
+    uses = image_uses(acts)
+    for d in range(5):
+        a = 8 + d
+        frames = acts[a]["frames"]
+        if len(frames) != len(WALK_BOB):
+            raise ValueError(f"Walking {DIRECTIONS[d]} has {len(frames)} frames, not {len(WALK_BOB)}")
+        index = [fr["layers"][0]["sprite_index"] for fr in frames]
+        for i in index:
+            if any(not 8 <= ua < 16 for ua, _, _ in uses[i]):
+                raise ValueError(f"Image {i} is drawn by walking and by another action")
+        # The frames in actor space, on one canvas with room for the search.
+        size, origin = (260, 280), (130, 210)
+        canvases, actor_necks = [], []
+        for fr, i in zip(frames, index):
+            layer, img = fr["layers"][0], images[i]
+            h, w = img.shape[:2]
+            left, top = origin[0] + layer["x"] - w // 2, origin[1] + layer["y"] - h // 2
+            canvas = np.zeros((size[1], size[0], 4), np.uint8)
+            canvas[top:top + h, left:left + w] = img
+            canvases.append(canvas)
+            actor_necks.append((left + necks[i][0], top + necks[i][1]))
+        found, ref = walk_offsets(canvases, actor_necks)
+        across = int(np.median([dx for dx, _ in found]))
+        base = int(np.median([dy - bob for (_, dy), bob in zip(found, WALK_BOB)]))
+        # The neck's usual place on the torso (where the steadiest frame's torso is).
+        rx, ry = np.median([(nx - dx, ny - dy) for (nx, ny), (dx, dy) in zip(actor_necks, found)], 0)
+        done = {}
+        for f, (fr, i) in enumerate(zip(frames, index)):
+            move = (across - found[f][0], base + WALK_BOB[f] - found[f][1])
+            if done.setdefault(i, move) != move:
+                raise ValueError(f"Walking {DIRECTIONS[d]} draws image {i} twice, moved two ways")
+            if f != index.index(i):
+                continue
+            layer, img = fr["layers"][0], images[i]
+            h = img.shape[0]
+            # Down: rows at the hips go (up: they repeat), below the torso and above the knees.
+            nx, ny = necks[i]
+            img = respace_rows(img, int(ny) + WALK_BOX[2] + 2, min(int(ny) + WALK_BOX[2] + 16, h - 8), move[1])
+            if (h - img.shape[0]) % 2:
+                img = np.concatenate([np.zeros((1,) + img.shape[1:], img.dtype), img])
+            grown = img.shape[0] - h
+            images[i] = img
+            # The neck: its usual place, where this frame's torso now is (image space).
+            left = origin[0] + layer["x"] + move[0] - img.shape[1] // 2
+            top = origin[1] + layer["y"] - grown // 2 - img.shape[0] // 2
+            necks[i] = (rx + across - left, ry + base + WALK_BOB[f] - top)
+            for ua, uf, ul in uses[i]:
+                target = acts[ua]["frames"][uf]["layers"][0]
+                target["x"] += -move[0] if ul.get("mirror") else move[0]
+                target["y"] -= grown // 2
+                target["width"], target["height"] = img.shape[1], img.shape[0]
+    return acts, images, necks
+
+
 # ---------------------------------------------------------------- palettes
 
 
@@ -972,6 +1197,7 @@ def build(compiled, out, reference=None, sized=None):
         cx, cy = neck_offset(cuts, a, f)
         necks.append((ax + cx, ay + cy))
     body_images, body_acts, body_necks = bodies, actions, necks
+    native_of = {i: i for i in range(len(images))}
     if sized:
         big, body_acts = load_body(sized)
         grids, big_grids = cell_grids(compiled), cell_grids(sized)
@@ -988,6 +1214,30 @@ def build(compiled, out, reference=None, sized=None):
             body_images[s] = rescale_body(big[s], big_grids[s], bodies[n], grids[n], *masks[n], model)
             # The neck grows with the body; the anchors keep their official offsets from it.
             body_necks[s] = tuple(float(v) for v in regrid(necks[n], grids[n], big_grids[s]))
+        native_of = {s: n for n, s in pairs.items()}
+    body_acts = copy_actions(body_acts)
+    body_images, body_necks = list(body_images), list(body_necks)
+    # Hand corrections: a frame drawn apart from its cycle takes a neighbour's upper body.
+    donors = {n: e["upper_body_from"] for n, e in enumerate(cuts["images"]) if "upper_body_from" in e}
+    sized_of = {n: s for s, n in native_of.items()}
+    for n, m in donors.items():
+        s, t = sized_of[n], sized_of[m]
+        body_images[s], move, body_necks[s] = upper_body_from(body_images[s], body_necks[s], body_images[t], body_necks[t])
+        for action in body_acts:
+            for frame in action["frames"]:
+                layer = frame["layers"][0]
+                if layer["sprite_index"] == s:
+                    layer["x"] += -round(move[0]) if layer.get("mirror") else round(move[0])
+                    layer["y"] += round(move[1])
+                    layer["width"], layer["height"] = body_images[s].shape[1], body_images[s].shape[0]
+    body_acts, body_images, body_necks = steady_walk(body_acts, body_images, body_necks)
+    # Where the head stands on the body (not lying beside it), the neck it lost.
+    skin, coat = neck_colours(body_images)
+    for s, n in native_of.items():
+        entry = cuts["images"][n]
+        _, u, _ = neck_frame(entry, images[n][..., 3] >= 128)
+        if abs(u[1]) >= abs(u[0]) and u[1] > 0:
+            body_images[s] = neck_stub(body_images[s], body_necks[s], coat if entry.get("view") in (3, 4, 5) else skin)
 
     body_pal = build_palette(body_images, body_material, BODY_LAYOUT)
     head_pal = build_palette(heads, head_material, HEAD_LAYOUT)
@@ -1017,8 +1267,15 @@ def build(compiled, out, reference=None, sized=None):
 
     anchors = frame_anchors(body_acts, body_images, body_necks)
     # Hairstyle 43 is placed against the native body's anchors. Drawn on any body a head keeps
-    # its place relative to the anchor, so it sits the same on the official-size one.
-    native_anchors = frame_anchors(actions, images, necks) if sized else anchors
+    # its place relative to the anchor, so it sits the same on the official-size one (and
+    # moves with a walking torso steadied there). A frame wearing a neighbour's upper body
+    # wears that neighbour's drawn head.
+    head_src = copy_actions(actions)
+    for action in head_src:
+        for frame in action["frames"]:
+            if frame["layers"][0]["sprite_index"] in donors:
+                frame["layers"][0] = dict(uses[donors[frame["layers"][0]["sprite_index"]]][0][2])
+    native_anchors = frame_anchors(head_src, images, necks)
 
     # Body ACT: indexed layers and a head anchor per frame.
     body_actions = []
@@ -1045,7 +1302,7 @@ def build(compiled, out, reference=None, sized=None):
                     x=at[0] - own[0] + at_anchor[0], y=at[1] - own[1] + at_anchor[1])
 
     head_actions = []
-    for a, action in enumerate(actions):
+    for a, action in enumerate(head_src):
         group, d = divmod(a, 8)
         frames = []
         for f, frame in enumerate(action["frames"]):

@@ -120,7 +120,8 @@
     20,
     39
    ],
-   "note": "walking south, passing pose (a separately drawn repair frame): its head sat 3 px higher on the shoulders than the rest of the cycle"
+   "upper_body_from": 6,
+   "note": "walking south, passing pose (a separately drawn repair frame): its head sat 3 px higher on the shoulders than the rest of the cycle. Its upper body, smaller and lower than the rest of the cycle's, is the next frame's (image 6), sash on sash: the shoulders no longer shrink and drop twice a step"
   },
   {
    "anchor": [
@@ -177,7 +178,9 @@
    "drop": [
     0,
     5
-   ]
+   ],
+   "upper_body_from": 7,
+   "note": "walking south, the second separately drawn repair frame: its upper body is the previous frame's (image 7), sash on sash"
   },
   {
    "anchor": [
@@ -671,7 +674,22 @@
    "drop": [
     0,
     4
-   ]
+   ],
+   "cut": [
+    [
+     45,
+     40,
+     52,
+     44
+    ],
+    [
+     75,
+     56,
+     83,
+     63
+    ]
+   ],
+   "note": "walking NW: a wisp of ribbon above the near shoulder and the ponytail's tip past the sash"
   },
   {
    "anchor": [
