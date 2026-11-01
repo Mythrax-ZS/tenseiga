@@ -991,12 +991,13 @@ pub enum EscChoice {
     CharSelect,
     Options,
     Shortcuts,
+    Keys,
     Exit,
     Back,
 }
 
 /// The Esc game menu, like the original client's: Character Select, Options, Shortcut
-/// Information, Exit, Return to Game.
+/// Information, Shortcut Settings, Exit, Return to Game.
 pub fn esc_menu(ctx: &egui::Context) -> Option<EscChoice> {
     let mut choice = None;
     egui::Window::new("game menu")
@@ -1019,6 +1020,9 @@ pub fn esc_menu(ctx: &egui::Context) -> Option<EscChoice> {
                 }
                 if button(ui, &crate::msgstr::get(3880, &[]).unwrap_or_else(|| "Shortcut Information".into())) {
                     choice = Some(EscChoice::Shortcuts);
+                }
+                if button(ui, &crate::msgstr::get(1494, &[]).unwrap_or_else(|| "Shortcut Settings".into())) {
+                    choice = Some(EscChoice::Keys);
                 }
                 if button(ui, "Exit") {
                     choice = Some(EscChoice::Exit);

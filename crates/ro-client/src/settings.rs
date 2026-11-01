@@ -74,14 +74,19 @@ pub struct Settings {
     pub pad_live: Option<[glam::Vec2; 2]>,
     /// Where the HUD elements sit and how big they are (Arrange; see hudlayout).
     pub hud_layout: crate::hudlayout::Layout,
+    /// Shortcut Settings: keys moved from their defaults (action id -> key, "" for none).
+    pub keys: crate::keybinds::Keys,
     /// Arrange was pressed: the game opens the layout editor (not saved).
     #[serde(skip)]
     pub arrange: bool,
+    /// Shortcut Settings was pressed: the game opens it (not saved).
+    #[serde(skip)]
+    pub open_keys: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, hud_layout: Default::default(), arrange: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
+        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, hud_layout: Default::default(), keys: Default::default(), arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
     }
 }
 
@@ -401,6 +406,11 @@ impl Settings {
             })
             .response
             .on_hover_text("F12 cycles these too");
+        ui.end_row();
+        ui.label("Keys");
+        if ui.button(crate::msgstr::get(1494, &[]).unwrap_or_else(|| "Shortcut Settings".into())).on_hover_text("Which key does what: the shortcut bar, windows, macros").clicked() {
+            self.open_keys = true;
+        }
         ui.end_row();
         section(ui, "Battle mode");
         ui.label("Enabled");

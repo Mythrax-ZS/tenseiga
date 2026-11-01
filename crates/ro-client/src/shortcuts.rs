@@ -1,54 +1,15 @@
 //! The Shortcut Information window (the original's menu entry of that name, msgstringtable
-//! 3880): every keyboard, mouse and gamepad shortcut and what it does. It describes what
-//! main.rs does (`key_pressed`, `alt_key`, the mouse events and `gamepad_frame`), so a new
-//! shortcut there belongs here too.
+//! 3880): every keyboard, mouse and gamepad shortcut and what it does. The keys Shortcut
+//! Settings can change come from `keybinds`; the rest describe what main.rs does
+//! (`key_pressed`, the mouse events and `gamepad_frame`), so a new shortcut there belongs
+//! here too.
 
 use crate::padglyph::{Btn, Style};
 use egui::{Color32, RichText};
 
-const WINDOWS: &[(&str, &str)] = &[
-    ("Alt+E", "Inventory"),
-    ("Alt+Q", "Equipment"),
-    ("Alt+A", "Status"),
-    ("Alt+S", "Skills"),
-    ("Alt+Z", "Party"),
-    ("Alt+H", "Friends"),
-    ("Alt+G", "Guild"),
-    ("Alt+U", "Quests"),
-    ("Alt+W", "Cart"),
-    ("Alt+R", "Companions (pet, homunculus, mercenary)"),
-    ("Alt+X", "Mail"),
-    ("Alt+B", "Bank"),
-    ("Alt+C", "Cash Shop"),
-    ("Alt+Y", "Achievements"),
-    ("Alt+J", "Attendance"),
-    ("Alt+N", "Party Booking"),
-    ("Alt+K", "Create a chat room"),
-    ("Alt+L", "Emotion List"),
-    ("Alt+M", "Macros (what Alt+1 to Alt+0 say)"),
-    ("Alt+O", "Settings"),
-];
-
-const BAR: &[(&str, &str)] = &[
-    ("F1 - F9", "Use the slots of the shortcut row on show"),
-    ("F12", "Show one to four shortcut rows, or hide the bar"),
-    ("Drag the top edge", "Show more or fewer shortcut rows"),
-];
-
 const CHAT: &[(&str, &str)] = &[
     ("Enter", "Type in the chat (with battle mode off, any letter starts typing too)"),
     ("Up / Down", "While typing: the lines you sent before"),
-    ("Alt+1 - Alt+0", "Say a macro (emotes until changed with Alt+M)"),
-];
-
-const GAME: &[(&str, &str)] = &[
-    ("Esc", "Game menu; cancels a skill being aimed"),
-    ("Insert", "Sit down or stand up"),
-    ("Ctrl+Tab", "Minimap on or off"),
-    ("F10", "Performance overlay on or off (frame rate, frame times, ping)"),
-    ("F11", "Full screen on or off"),
-    ("Print Screen", "Screenshot, saved in the ScreenShot folder"),
-    ("Scroll Lock", "Screenshot"),
 ];
 
 const MOUSE: &[(&str, &str)] = &[
@@ -185,12 +146,16 @@ pub struct Ctx<'a> {
     pub battle_space_chat: bool,
     /// The controller button family to draw.
     pub pad: Style,
+    /// Keys moved in Shortcut Settings.
+    pub keys: &'a crate::keybinds::Keys,
 }
 
 #[derive(Default)]
 pub struct ShortcutWindow {
     pub open: bool,
     pub tab: usize,
+    /// Its Shortcut Settings button was pressed (the game opens that window).
+    pub open_keys: bool,
 }
 
 impl ShortcutWindow {
@@ -202,10 +167,14 @@ impl ShortcutWindow {
         let max_height = (ctx.content_rect().height() - 140.0).clamp(220.0, 620.0);
         let mut open = self.open;
         let tab = &mut self.tab;
+        let open_keys = &mut self.open_keys;
         crate::classic::show(ctx, egui::Window::new(&title).id(egui::Id::unique("shortcut information")).open(&mut open).resizable(false).collapsible(false).default_width(470.0).default_pos(egui::pos2(ctx.content_rect().center().x - 235.0, 70.0)), &title, true, |ui| {
             ui.horizontal(|ui| {
                 for (i, name) in ["Keyboard", "Mouse", "Gamepad"].iter().enumerate() {
                     ui.selectable_value(tab, i, *name);
+                }
+                if *tab == 0 && ui.button(crate::msgstr::get(1494, &[]).unwrap_or_else(|| "Shortcut Settings".into())).on_hover_text("Change the keys").clicked() {
+                    *open_keys = true;
                 }
             });
             ui.separator();
@@ -224,10 +193,12 @@ impl ShortcutWindow {
 
 fn keyboard(ui: &mut egui::Ui, s: &Ctx<'_>) {
     let list = |ui: &mut egui::Ui, l: &[(&str, &str)]| rows(ui, l.iter().map(|(k, d)| (k.to_string(), d.to_string())));
+    let bound = |ui: &mut egui::Ui, l: Vec<(String, &str)>| rows(ui, l.into_iter().map(|(k, d)| (k, d.to_string())));
     section(ui, "Windows");
-    list(ui, WINDOWS);
+    bound(ui, crate::keybinds::rows(s.keys, true));
     section(ui, "Shortcut bar");
-    list(ui, BAR);
+    bound(ui, crate::keybinds::bar_rows(s.keys));
+    list(ui, &[("Drag the top edge", "Show more or fewer shortcut rows")]);
     section(ui, &format!("Battle mode (/bm): {}", if s.battle_mode { "on" } else { "off" }));
     let keys: Vec<(String, String)> = s
         .battle_keys
@@ -250,8 +221,11 @@ fn keyboard(ui: &mut egui::Ui, s: &Ctx<'_>) {
     note(ui, "With battle mode on, letters use skills instead of typing. Settings > Controls changes the keys.");
     section(ui, "Chat");
     list(ui, CHAT);
+    bound(ui, crate::keybinds::macro_rows(s.keys));
     section(ui, "Game");
-    list(ui, GAME);
+    list(ui, &[("Esc", "Game menu; cancels a skill being aimed")]);
+    bound(ui, crate::keybinds::rows(s.keys, false));
+    list(ui, &[("Print Screen", "Screenshot, saved in the ScreenShot folder")]);
 }
 
 /// A note in the description column, wrapped to the column.

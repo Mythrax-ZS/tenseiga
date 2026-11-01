@@ -179,6 +179,8 @@ pub struct View<'a> {
     pub battle_mode: bool,
     /// Those keys, a string of slot keys per row above the first.
     pub battle_keys: &'a [String],
+    /// Keys moved in Shortcut Settings (the first row's slot keys).
+    pub keys: &'a crate::keybinds::Keys,
     /// Skills cooling down: id -> when they are ready again.
     pub cooldowns: &'a HashMap<u16, std::time::Instant>,
     /// We have a pushcart (inventory items can go into it).
@@ -227,7 +229,7 @@ fn slot_glyph(v: &View, offset: u8, col: usize) -> Option<(crate::padglyph::Btn,
     Some((crate::padglyph::SLOT_BUTTONS[col], style))
 }
 
-/// The key shown on a shortcut slot: F1..F9 on the first row, the battle mode letters on
+/// The key shown on a shortcut slot: F1..F9 (or as Shortcut Settings moved them) on the first row, the battle mode letters on
 /// the rows above it, or the controller buttons ("RT + A").
 fn slot_key_label(v: &View, offset: u8, col: usize) -> String {
     if let (Some(style), Some(t)) = (v.pad, pad_row_triggers(offset, v.battle_mode)) {
@@ -236,7 +238,7 @@ fn slot_key_label(v: &View, offset: u8, col: usize) -> String {
         return crate::padglyph::combo_name(&bs, style);
     }
     match offset {
-        0 => format!("F{}", col + 1),
+        0 => crate::keybinds::slot_key(v.keys, col),
         n if v.battle_mode => v.battle_keys.get(n as usize - 1).and_then(|k| k.chars().nth(col)).map_or(String::new(), |c| c.to_uppercase().to_string()),
         _ => String::new(),
     }

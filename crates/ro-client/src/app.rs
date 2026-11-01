@@ -56,6 +56,7 @@ mod companions;
 mod emblem;
 mod emotes;
 mod settings;
+mod keybinds;
 mod padglyph;
 mod perf;
 mod haptics;
@@ -658,10 +659,10 @@ const PAD_STEP: i32 = 8;
 
 use windows::{HOTKEYS_PER_ROW, HOTKEY_ROWS};
 
-/// F1..F9 -> slot within the visible shortcut row.
 /// The skill rAthena keeps using while its key is held (CZ_USE_SKILL_START): Rolling Cutter.
 const HOLD_SKILL: u16 = 2036;
 
+/// F1..F9 -> their place in a row (with F10-F12, the keys that reach the game over the UI).
 fn hotkey_slot(k: winit::keyboard::NamedKey) -> Option<usize> {
     use winit::keyboard::NamedKey::*;
     [F1, F2, F3, F4, F5, F6, F7, F8, F9].iter().position(|&f| f == k)
@@ -1231,12 +1232,15 @@ struct App {
     fx_test_next: Option<std::time::Instant>,
     alt: bool,
     ctrl: bool,
+    shift: bool,
     /// Print Screen was pressed: the next frame is saved instead of shown.
     screenshot: bool,
     /// The Emotion List (Alt+L) and the macro window (Alt+M).
     emote_win: emotes::EmoteWindow,
     /// Shortcut Information: every key and what it does (from the Esc menu).
     shortcut_win: shortcuts::ShortcutWindow,
+    /// Shortcut Settings: which key does what.
+    key_win: keybinds::KeyWindow,
     queued_action: Option<windows::UiAction>,
     /// A pointer move the test script queued (UI points); egui keeps the position.
     fake_pointer: Option<egui::Pos2>,
@@ -4156,6 +4160,11 @@ impl App {
     /// A key pressed over the game (not taken by the UI).
     fn key_pressed(&mut self, logical_key: winit::keyboard::Key) {
         use winit::keyboard::{Key, NamedKey};
+        // The keys Shortcut Settings binds (shortcut bar, windows, macros, game toggles).
+        if let Some(does) = keybinds::name(&logical_key, self.ctrl, self.alt, self.shift).and_then(|n| keybinds::lookup(&self.settings.keys, &n)) {
+            self.run_key(does, logical_key);
+            return;
+        }
         match &logical_key {
             // Esc cancels aiming; otherwise it opens the game menu, as in the original.
             Key::Named(NamedKey::Escape) => {
@@ -4163,40 +4172,8 @@ impl App {
                     self.esc_menu = !self.esc_menu;
                 }
             }
-            // Shortcut bar: F1-F9 use the first row on show; F12 shows one to four
-            // rows or hides the bar.
-            // F11: full screen on or off (borderless, at the desktop's resolution).
-            // F10: the performance overlay on or off.
-            Key::Named(NamedKey::F10) => {
-                self.settings.perf_overlay = !self.settings.perf_overlay;
-                self.settings.save();
-            }
-            Key::Named(NamedKey::F11) => {
-                self.settings.fullscreen = !self.settings.fullscreen;
-                self.settings.save();
-            }
-            Key::Named(NamedKey::F12) => {
-                self.settings.hotkey_rows = (self.settings.hotkey_rows + 1) % (HOTKEY_ROWS + 1);
-                self.settings.save();
-            }
-            Key::Named(k) if hotkey_slot(*k).is_some() => {
-                let slot = self.hotkey_row as usize * HOTKEYS_PER_ROW + hotkey_slot(*k).unwrap_or(0);
-                self.press_hotkey(slot, logical_key.clone());
-            }
-            Key::Character(c) if self.alt => self.alt_key(&c.to_ascii_lowercase()),
-            // Insert: sit down or stand up, as in the original.
-            Key::Named(NamedKey::Insert) => {
-                let sitting = self.player.as_ref().is_some_and(|p| p.sitting);
-                self.send(ro_net::Command::Sit(!sitting));
-            }
-            // Scroll Lock also takes a screenshot, as in the original.
-            Key::Named(NamedKey::ScrollLock) => self.screenshot = true,
-            // Ctrl+Tab: the minimap on or off.
-            Key::Named(NamedKey::Tab) if self.ctrl => {
-                self.settings.minimap = !self.settings.minimap;
-                self.settings.save();
-            }
-            Key::Character(_) if self.ctrl => {}
+            // Unbound Alt and Ctrl combinations don't type.
+            Key::Character(_) if self.alt || self.ctrl => {}
             // Battle mode: Space opens the chat, letters use the shortcut rows.
             Key::Named(NamedKey::Space) if self.settings.battle_mode && self.settings.battle_space_chat => self.hud.focus_chat(),
             Key::Named(NamedKey::Space) if self.settings.battle_mode => {
@@ -4212,6 +4189,39 @@ impl App {
             // Otherwise typing goes to the chat, as in the original.
             Key::Character(c) => self.hud.type_into_chat(c),
             _ => {}
+        }
+    }
+
+    /// What a bound key does (keybinds; the defaults are the original's keys: F1-F9 and F12
+    /// for the shortcut bar, Alt+letters for windows, Alt+1..0 for macros, Insert to sit,
+    /// Ctrl+Tab for the minimap, Scroll Lock for a screenshot; F10 and F11 are ours).
+    fn run_key(&mut self, does: keybinds::Does, key: winit::keyboard::Key) {
+        use keybinds::Does;
+        match does {
+            Does::Slot(col) => self.press_hotkey(self.hotkey_row as usize * HOTKEYS_PER_ROW + col, key),
+            Does::BarRows => {
+                self.settings.hotkey_rows = (self.settings.hotkey_rows + 1) % (HOTKEY_ROWS + 1);
+                self.settings.save();
+            }
+            Does::Window(code) => self.alt_key(code),
+            Does::Macro(digit) => self.alt_key(&digit.to_string()),
+            Does::Sit => {
+                let sitting = self.player.as_ref().is_some_and(|p| p.sitting);
+                self.send(ro_net::Command::Sit(!sitting));
+            }
+            Does::Minimap => {
+                self.settings.minimap = !self.settings.minimap;
+                self.settings.save();
+            }
+            Does::Perf => {
+                self.settings.perf_overlay = !self.settings.perf_overlay;
+                self.settings.save();
+            }
+            Does::Fullscreen => {
+                self.settings.fullscreen = !self.settings.fullscreen;
+                self.settings.save();
+            }
+            Does::Screenshot => self.screenshot = true,
         }
     }
 
@@ -4891,6 +4901,7 @@ impl App {
             }
             "opts" => self.game_opts.open = !self.game_opts.open,
             "keys" => self.shortcut_win.open = !self.shortcut_win.open,
+            "bindings" => self.key_win.open = !self.key_win.open,
             "rank" => self.send(ro_net::Command::Ranking(self.ranking.kind)),
             "roulette" => self.open_roulette(),
             "battle" => {
@@ -6532,6 +6543,13 @@ impl App {
                     // press:k presses a key over the game: a letter, F1..F12, Space or Enter.
                     Some(("press", k)) => {
                         use winit::keyboard::{Key, NamedKey};
+                        // Ctrl+ / Alt+ in front hold that modifier for the press.
+                        let held = (self.ctrl, self.alt);
+                        let mut k = k;
+                        while let Some((m, rest)) = k.split_once('+').filter(|(m, r)| !r.is_empty() && matches!(*m, "Ctrl" | "Alt")) {
+                            if m == "Ctrl" { self.ctrl = true } else { self.alt = true }
+                            k = rest;
+                        }
                         let named = match k {
                             "Space" => Some(NamedKey::Space),
                             "Enter" => Some(NamedKey::Enter),
@@ -6546,6 +6564,7 @@ impl App {
                             Some(n) => self.key_pressed(Key::Named(n)),
                             None => self.key_pressed(Key::Character(k.into())),
                         }
+                        (self.ctrl, self.alt) = held;
                         None
                     }
                     // pad:style[:row] draws the controller UI in that style (xbox, playstation,
@@ -7426,6 +7445,7 @@ impl App {
             let skill_names = |n: &str| self.skill_names.display(n);
             // A copy: the UI below may change the settings while the view is held.
             let battle_keys = self.settings.battle_keys.clone();
+            let keys = self.settings.keys.clone();
             let view = windows::View {
                 portrait: self.portrait.as_ref().and_then(|p| p.1.as_ref()),
                 skin: self.skin.as_ref().filter(|_| self.settings.classic_ui),
@@ -7451,6 +7471,7 @@ impl App {
                 hotkey_rows: self.settings.hotkey_rows,
                 battle_mode: self.settings.battle_mode,
                 battle_keys: &battle_keys,
+                keys: &keys,
                 cooldowns: &self.cooldowns,
                 has_cart: self.merchant.has_cart(),
                 show_equip: self.show_equip,
@@ -7712,8 +7733,14 @@ impl App {
                 let mut macros_changed = false;
                 self.shortcut_win.show(
                     ui.ctx(),
-                    shortcuts::Ctx { battle_mode: self.settings.battle_mode, battle_keys: &self.settings.battle_keys, battle_space_chat: self.settings.battle_space_chat, pad: self.pad_preview.map_or_else(|| self.settings.pad_style.resolve(self.pad.detected), |p| p.0) },
+                    shortcuts::Ctx { battle_mode: self.settings.battle_mode, battle_keys: &self.settings.battle_keys, battle_space_chat: self.settings.battle_space_chat, pad: self.pad_preview.map_or_else(|| self.settings.pad_style.resolve(self.pad.detected), |p| p.0), keys: &self.settings.keys },
                 );
+                if std::mem::take(&mut self.shortcut_win.open_keys) | std::mem::take(&mut self.settings.open_keys) {
+                    self.key_win.open = true;
+                }
+                if self.key_win.show(ui.ctx(), &mut self.settings.keys) {
+                    self.settings.save();
+                }
                 if let Some(line) = self.emote_win.show(ui.ctx(), self.vfs.as_ref(), &mut self.settings.macros, &mut macros_changed) {
                     self.queued_chat.push(line);
                 }
@@ -7791,6 +7818,10 @@ impl App {
                         Some(hud::EscChoice::Shortcuts) => {
                             self.esc_menu = false;
                             self.shortcut_win.open = true;
+                        }
+                        Some(hud::EscChoice::Keys) => {
+                            self.esc_menu = false;
+                            self.key_win.open = true;
                         }
                         // As request_exit (self is borrowed here): ask the server before leaving.
                         Some(hud::EscChoice::Exit) => {
@@ -8248,6 +8279,19 @@ impl ApplicationHandler for App {
             return;
         }
         self.note_keyboard_mouse(&event);
+        // Shortcut Settings waiting for a key: the next press becomes the binding, before the UI
+        // or the game sees it (Esc removes the binding, as in the original).
+        if self.key_win.capturing.is_some() {
+            if let WindowEvent::KeyboardInput { event: winit::event::KeyEvent { logical_key, state: ElementState::Pressed, repeat: false, .. }, .. } = &event {
+                if *logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape) {
+                    self.key_win.captured(&mut self.settings.keys, None);
+                } else if let Some(name) = keybinds::name(logical_key, self.ctrl, self.alt, self.shift) {
+                    self.key_win.captured(&mut self.settings.keys, Some(name));
+                }
+                self.settings.save();
+                return;
+            }
+        }
         let (Some(r), Some(window)) = (self.renderer.as_mut(), self.window.as_ref()) else { return };
         // Alt+letter shortcuts go straight to the game, even while the chat has the keyboard
         // (AltGr, which is Ctrl+Alt, still types into the UI).
@@ -8285,6 +8329,7 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(m) => {
                 self.alt = m.state().alt_key();
                 self.ctrl = m.state().control_key();
+                self.shift = m.state().shift_key();
             }
             // Print Screen saves a screenshot, as in the original (Windows reports only its release).
             WindowEvent::KeyboardInput { event: winit::event::KeyEvent { logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::PrintScreen), state: ElementState::Released, .. }, .. } => {
@@ -8588,9 +8633,11 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         fx_test_next: None,
         alt: false,
         ctrl: false,
+        shift: false,
         screenshot: false,
         emote_win: Default::default(),
         shortcut_win: Default::default(),
+        key_win: Default::default(),
         queued_action: None,
         fake_pointer: None,
         fake_click: None,
