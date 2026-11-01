@@ -109,6 +109,20 @@ pub struct PointLight {
     pub range: f32,
 }
 
+impl PointLight {
+    /// Brightness at `t` seconds: fire-coloured lights (red over green over blue: torches,
+    /// braziers, lanterns) flicker by up to a quarter, each on its own beat (map lights are dim
+    /// beside the lightmaps, so less hardly shows); others hold steady.
+    fn flicker(&self, t: f32) -> f32 {
+        let [r, g, b] = self.color;
+        if !(r > g * 1.15 && g >= b) {
+            return 1.0;
+        }
+        let phase = (self.pos.x * 0.37 + self.pos.z * 0.73).fract() * std::f32::consts::TAU;
+        1.0 + 0.12 * (t * 7.3 + phase).sin() + 0.08 * (t * 13.1 + phase * 2.0).sin() + 0.05 * (t * 23.7 + phase * 3.0).sin()
+    }
+}
+
 /// Map-wide sun lighting (from the RSW), in the renderer's y-up space.
 #[derive(Clone, Copy, Debug)]
 pub struct Lighting {
@@ -1292,11 +1306,16 @@ impl Renderer {
         // would leave only a pool at the feet (the same reason the sun is lowered).
         let cast_from = |l: &PointLight| glam::Vec3::new(l.pos.x, l.pos.y.min(cam.target.y + TORCH_HEIGHT), l.pos.z);
         let torch_vps: Vec<glam::Mat4> = torches.iter().map(|(l, _)| shadow::Shadow::torch_vp(cast_from(l), cam.target, l.range)).collect();
-        // The point lights nearest the camera target, flattened into (pos, range), (colour, 0).
+        // The point lights nearest the camera target, flattened into (pos, range), (colour, flicker).
         let lights: Vec<[f32; 4]> = {
             let mut near: Vec<&PointLight> = self.point_lights.iter().collect();
             near.sort_by(|a, b| a.pos.distance_squared(cam.target).total_cmp(&b.pos.distance_squared(cam.target)));
-            near.iter().take(MAX_LIGHTS).flat_map(|l| [l.pos.extend(l.range).to_array(), [l.color[0], l.color[1], l.color[2], 0.0]]).collect()
+            let t = self.started.elapsed().as_secs_f32();
+            // The colour's w is the flicker's swing, for the light baked around the flame.
+            near.iter().take(MAX_LIGHTS).flat_map(|l| {
+                let f = l.flicker(t);
+                [l.pos.extend(l.range).to_array(), (glam::Vec3::from(l.color) * f).extend(f - 1.0).to_array()]
+            }).collect()
         };
         let globals = Globals {
             view_proj: cam.view_proj(aspect).to_cols_array_2d(),
@@ -1708,4 +1727,19 @@ fn globals_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, glo
             wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&torches[1].view) },
         ],
     })
+}
+
+#[cfg(test)]
+mod flicker_tests {
+    use super::PointLight;
+
+    #[test]
+    fn fires_flicker_and_others_hold_steady() {
+        let light = |color| PointLight { pos: glam::Vec3::new(12.0, 0.0, 30.0), color, range: 50.0 };
+        let (torch, crystal) = (light([0.5, 0.3, 0.1]), light([0.2, 0.4, 0.6]));
+        let samples: Vec<f32> = (0..50).map(|i| torch.flicker(i as f32 * 0.07)).collect();
+        assert!(samples.iter().all(|f| (0.75..=1.25).contains(f)));
+        assert!(samples.iter().any(|f| (f - 1.0).abs() > 0.1));
+        assert!((0..50).all(|i| crystal.flicker(i as f32 * 0.07) == 1.0));
+    }
 }

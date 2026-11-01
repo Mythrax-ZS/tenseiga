@@ -112,16 +112,18 @@ fn sun_visible(world: vec3<f32>) -> f32 {
     return lit / 9.0;
 }
 
-/// Map light-source contribution at a point.
-fn point_light(world: vec3<f32>) -> vec3<f32> {
+/// Map light-source contribution at a point; w: the flicker of flames near it (see scene.wgsl).
+fn point_light(world: vec3<f32>) -> vec4<f32> {
     var sum = vec3(0.0);
+    var flicker = 0.0;
     let count = i32(g.sprite_light.w);
     for (var i = 0; i < count; i++) {
         let l = g.lights[i * 2];
         let f = saturate(1.0 - distance(l.xyz, world) / max(l.w, 1.0));
         sum += g.lights[i * 2 + 1].rgb * f * f;
+        flicker += g.lights[i * 2 + 1].w * f * f;
     }
-    return sum * g.sprite_light.z;
+    return vec4(sum, clamp(flicker * 0.6, -0.3, 0.3)) * g.sprite_light.z;
 }
 
 struct FsOut {
@@ -159,7 +161,8 @@ fn fs_main(in: VsOut) -> FsOut {
         let geometry = sun_ray(in.anchor + vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0), 1u);
         let here = g.ambient.rgb + g.diffuse.rgb * up * mix(1.0, min(sun_visible(feet), geometry), g.shadow.x);
         let shade = here / max(full, vec3(0.05));
-        rgb = rgb * mix(vec3(1.0), shade, k) + rgb * point_light(in.anchor + vec3(0.0, 8.0, 0.0)) * k;
+        let pl = point_light(in.anchor + vec3(0.0, 8.0, 0.0));
+        rgb = rgb * mix(vec3(1.0), shade, k) * (1.0 + pl.w * k) + rgb * pl.rgb * k;
         rgb += srgb_to_linear(g.diffuse.rgb) * edge * g.sprite_light.y * up;
     }
     // Wading: below the waterline the sprite is seen through the water, tinted and faded
