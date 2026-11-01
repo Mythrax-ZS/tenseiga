@@ -5,8 +5,17 @@ The game job is **Samurai** (4500); **Ember Ronin** remains the asset filename.
 
 ## Rendering contract
 
-- The body includes the head and ponytail. Do not add stock heads, hair,
-  headgear, garment or shield layers. Its colors are authored into the sprite.
+- The body has no head, like official bodies: the player's head (any hairstyle,
+  with its hair colour) and headgear attach at the head anchor every frame
+  carries. Idle and sitting have three frames each, the head straight, turned
+  right and turned left, with the anchors following official heads' turns.
+- The Samurai's own tied-back hair, with its red ribbon, is hairstyle 43
+  (`data/sprite/인간족/머리통/{남,여}/43_*`), cut from the original artwork. Its
+  hair colours 0-8 (`data/palette/머리/머리43_*_N.pal`) take the official hair
+  colours' shades. The job-change NPC ties a new Samurai's hair this way.
+- Clothes dyes 1-7 (`data/palette/몸/samurai_남_N.pal`) recolour the coat, piping
+  and sash (azure, jade, violet, gold, white kimono, midnight, sakura). The body
+  is indexed, with each material in its own palette range.
 - The body and each weapon ACT contain 104 actions. Directions are S, SW, W, NW, N, NE, E, SE;
   the action index is `group * 8 + direction`.
 - Use human player actions: idle 0, walk 1, sit 2, pickup 3, ready 4,
@@ -54,8 +63,15 @@ sheets; its exact sequence is recorded in the build metadata.
 
 The same design is used for idle, ready, walking, sitting, pickup, hurt, casting,
 falling and attacking. The three attack groups share one six-frame swing per
-authored direction. Female art, independently selectable heads/hair/headgear,
-alternate weapon artwork and custom skill effects remain outside this package.
+authored direction. Female art, alternate weapon artwork and custom skill
+effects remain outside this package.
+
+The head was separated from the generated frames by
+`tools/samurai_assets/separate_head.py` (see its notes): an official head fitted
+to each frame's drawn head gives the anchor, the hair and face become hairstyle
+43, and the coat they covered is filled in (from the other shoulder when facing
+us or away, smoothed and shaped to a sloping shoulder line otherwise). Hand
+corrections for individual frames are in `artwork/head_cut.json`.
 
 ## Sources and rebuilding
 

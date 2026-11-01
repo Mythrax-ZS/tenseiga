@@ -13,11 +13,11 @@
     "tools/samurai_assets/artwork/source/katana.refinement.json"
   ],
   "runtime_changes": "Body art, body ACT, frame timing, source grips and weapon scale unchanged. Starter katana artwork and dimensions unchanged. Attack weapon ACT corrects cutting-edge orientation and five winding/overhead hand-axis angles using the shared build metadata.",
-  "head_included": true,
-  "hair_included": true,
+  "head_included": false,
+  "hair_included": false,
   "weapon_included_in_body": false,
   "sex": "male",
-  "art_status": "Body and starter blade artwork retain prior visual reviews. Current attack poses were reviewed in decoded before/after composites; current runtime validation is recorded separately. Three attack groups share one six-frame swing. Female and separate head/headgear art are not supplied.",
+  "art_status": "Body and starter blade artwork retain prior visual reviews. Current attack poses were reviewed in decoded before/after composites; current runtime validation is recorded separately. Three attack groups share one six-frame swing. The head is separate (player heads, headgear and hairstyle 43 attach at per-frame anchors). Female art is not supplied.",
   "build_config_sha256": "0bb1abcabb4f538a61cffc4079ed51ed0d30fab9fde606d6d94c04aec4d81eb0",
   "body_images": 119,
   "actions": 104,
@@ -86,5 +86,12 @@
       "data/texture/effect/efst_sam_moonlit_reflection.tga": "828a2eda4ea8811ddfd8f6ba18d3fc662bab35592ecfc0143756d0c0aa267bae",
       "data/texture/effect/efst_sam_muramasas_curse.tga": "6ea20bef84bf43b407fe64c78219aa0d32a855347047ec73c5a36861f153f08c"
     }
-  }
+  },
+  "hairstyle": {
+    "id": 43,
+    "sprites": "data/sprite/인간족/머리통/{남,여}/43_{sex}",
+    "palettes": "data/palette/머리/머리43_{sex}_N.pal",
+    "origin": "The original artwork's drawn head and ponytail, cut out by tools/samurai_assets/separate_head.py; hair colours take the shades of the official hair palettes."
+  },
+  "body_dyes": "data/palette/몸/samurai_남_1..7.pal, generated from the body's indexed palette"
 }

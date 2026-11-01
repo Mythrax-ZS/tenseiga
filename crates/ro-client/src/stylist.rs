@@ -27,7 +27,8 @@ pub struct Stylist {
     pub status: String,
 }
 
-pub const HAIR_STYLES: u16 = 42;
+/// The stock 42, and the Samurai's tied-back hair (samurai::HAIRSTYLE).
+pub const HAIR_STYLES: u16 = crate::samurai::HAIRSTYLE;
 pub const HAIR_COLORS: u16 = 8;
 pub const CLOTHES_COLORS: u16 = 7;
 

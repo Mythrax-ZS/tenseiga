@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 pub const JOB: i16 = 4500;
 pub const SPRITE: &str = "samurai";
 pub const BODY: &str = r"data\sprite\custom\samurai\ember_ronin";
+/// The Samurai's tied-back hair with its red ribbon, as a hairstyle any character may wear
+/// (data\sprite\인간족\머리통\{sex}\43_{sex}; hair colours data\palette\머리\머리43_{sex}_N.pal).
+pub const HAIRSTYLE: u16 = 43;
 pub const KATANA: &str = r"data\sprite\custom\samurai\katana";
 pub const KUSANAGI: &str = r"data\sprite\custom\samurai\kusanagi";
 pub const MURAMASA: &str = r"data\sprite\custom\samurai\muramasa";
@@ -179,20 +182,47 @@ mod tests {
     }
 
     #[test]
-    fn full_body_preview_needs_no_stock_hair_or_headgear_assets() {
+    fn the_body_takes_heads_dyes_and_the_samurai_hairstyle() {
         assert!(crate::jobs::is_player(JOB));
         assert_eq!(crate::jobs::sprite(JOB), SPRITE);
         let appearance = crate::jobs::appearance(SPRITE, true).unwrap();
         assert_eq!(appearance.body, BODY);
-        assert!(!appearance.attachments);
+        assert!(appearance.attachments);
         assert!(crate::jobs::appearance(SPRITE, false).is_none());
         let vfs = ro_vfs::Vfs::new(vec![overlay_path().unwrap()], None, vec![]);
-        let look = crate::preview::Look { job: SPRITE.into(), male: true, hair: 99, hair_color: 17, clothes_color: 3, headgear: vec!["missing_hat".into()] };
-        let portrait = crate::preview::compose(&vfs, &look).expect("full-body preview without GRFs");
-        assert!(portrait.pixels.iter().any(|p| p.a() != 0));
-        let plain = crate::preview::compose(&vfs, &crate::preview::Look { hair: 1, hair_color: 0, clothes_color: 0, headgear: vec![], ..look.clone() }).unwrap();
-        assert_eq!(portrait.pixels, plain.pixels);
-        assert!(crate::preview::compose(&vfs, &crate::preview::Look { male: false, ..look }).is_none());
+        let look = crate::preview::Look { job: SPRITE.into(), male: true, hair: HAIRSTYLE, hair_color: 0, clothes_color: 0, headgear: vec![] };
+        let compose = |l: crate::preview::Look| crate::preview::compose(&vfs, &l).expect("preview from the overlay alone").pixels;
+        let plain = compose(look.clone());
+        // A stock hairstyle is not in the overlay: the body is drawn alone, headless.
+        assert_ne!(compose(crate::preview::Look { hair: 1, ..look.clone() }), plain);
+        // Every dye and hair colour the server allows exists and changes the picture.
+        for n in 1..=7 {
+            assert_ne!(compose(crate::preview::Look { clothes_color: n, ..look.clone() }), plain, "dye {n}");
+        }
+        for c in 1..=8 {
+            assert_ne!(compose(crate::preview::Look { hair_color: c, ..look.clone() }), plain, "hair colour {c}");
+        }
+    }
+
+    #[test]
+    fn body_and_hairstyle_anchor_every_frame() {
+        let root = overlay_path().expect("bundled Samurai overlay");
+        let act = |p: &str| ro_formats::act::Act::parse(&std::fs::read(root.join(p)).unwrap()).unwrap();
+        let body = act("data/sprite/custom/samurai/ember_ronin.act");
+        for sex in ["남", "여"] {
+            let head = act(&format!("data/sprite/인간족/머리통/{sex}/{HAIRSTYLE}_{sex}.act"));
+            assert_eq!(head.actions.len(), 104);
+            for (b, h) in body.actions.iter().zip(&head.actions) {
+                assert_eq!(b.frames.len(), h.frames.len());
+                assert!(b.frames.iter().chain(&h.frames).all(|f| f.anchors.len() == 1));
+            }
+        }
+        // Idle and sitting hold three poses each: the head straight, turned right, turned left.
+        for group in [0, 2] {
+            for d in 0..8 {
+                assert_eq!(body.actions[group * 8 + d].frames.len(), 3);
+            }
+        }
     }
 
     #[test]
