@@ -669,6 +669,20 @@ fn hotkey_slot(k: winit::keyboard::NamedKey) -> Option<usize> {
     [F1, F2, F3, F4, F5, F6, F7, F8, F9].iter().position(|&f| f == k)
 }
 
+/// The camera's jolt this frame while a screen quake runs (roBrowser's Camera.processQuake): a
+/// tenth of a cell to one side, give or take a quarter, flipping side every frame.
+fn quake_offset(quakes: &mut Vec<(std::time::Instant, std::time::Instant)>, flip: &mut bool, yaw: f32) -> glam::Vec3 {
+    let now = std::time::Instant::now();
+    quakes.retain(|q| q.1 > now);
+    if !quakes.iter().any(|q| q.0 <= now) {
+        return glam::Vec3::ZERO;
+    }
+    *flip = !*flip;
+    let jitter = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()) % 1000) as f32 / 1000.0 * 0.5 - 0.25;
+    let side = if *flip { 1.0 } else { -1.0 } * (1.0 + jitter) * 0.1 * ro_render::CELL;
+    glam::Vec3::new(yaw.cos(), 0.0, -yaw.sin()) * side
+}
+
 /// The next free ScreenShot\screenNNNN.png in the working directory (the original numbers
 /// its shots in a ScreenShot folder beside the client too).
 fn screenshot_path() -> PathBuf {
@@ -1045,6 +1059,12 @@ struct App {
     attack: Option<(u32, i16)>,
     /// How many lines of the Super Novice prayer have been said in a row.
     prayer_at: usize,
+    /// Screen quakes running or due: (start, end).
+    quakes: Vec<(std::time::Instant, std::time::Instant)>,
+    /// Which side the quake jolts the camera to this frame.
+    quake_flip: bool,
+    /// Varies the hit sparks' flecks.
+    spark_seed: u32,
     /// Walking toward the attack target after the server said it was out of reach.
     chasing: bool,
     /// Floating damage numbers: (world position, text, colour, age ms).
@@ -4006,6 +4026,9 @@ impl App {
                 }
             }
             ScriptEffect { id, effect } => {
+                if let Some(q) = fx::ef_quake(effect) {
+                    self.quake(q);
+                }
                 if let Some(pos) = self.unit_pos(id) {
                     match (fx::script_effect(effect), fx::ef_skill(effect)) {
                         (Some(name), _) => self.play_fx(name, pos),
@@ -4808,6 +4831,9 @@ impl App {
     }
 
     fn skill_fx(&mut self, skill: u16, pos: Option<glam::Vec3>, damaging: bool) {
+        if let Some(q) = fx::skill_quake(skill) {
+            self.quake(q);
+        }
         // The skill's own sound, when the client has one.
         if let (Some(a), Some(vfs), Some(name)) = (self.audio.as_ref(), self.vfs.as_ref(), self.skill_names.internal(skill)) {
             match a.skill_sound(name) {
@@ -6056,6 +6082,7 @@ impl App {
                 self.play_sound(&hit);
             }
         }
+        let mut spark = None;
         if let Some(m) = self.mob_mut(act.target) {
             if damage > 0 && act.kind != 4 && act.kind != 9 {
                 if let Some(c) = src_cell {
@@ -6064,6 +6091,10 @@ impl App {
                 m.set_pose(Pose::Hurt, act.dmg_speed as f32);
             }
             let pos = m.actor.pos;
+            // The original's hit spark lands on monsters only (roBrowser's EF_HIT1 spawn).
+            if damage > 0 && m.kind == 5 {
+                spark = Some(pos);
+            }
             let (text, color) = match act.kind {
                 11 => ("Lucky".to_string(), egui::Color32::from_rgb(140, 220, 255)),
                 _ if damage <= 0 => ("Miss".to_string(), egui::Color32::from_rgb(200, 200, 200)),
@@ -6072,6 +6103,31 @@ impl App {
                 _ => (damage.to_string(), egui::Color32::WHITE),
             };
             self.floaters.push((pos, text, color, 0.0));
+        }
+        if let Some(pos) = spark {
+            self.hit_spark(pos);
+        }
+    }
+
+    /// EF_HIT1, the spark where a hit lands: four flecks of effect\pok3.tga flying out from a
+    /// cell above the target for 300 ms (roBrowser's EffectTable: alpha 0.8, ends up to 2 cells off).
+    fn hit_spark(&mut self, pos: glam::Vec3) {
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let Some(tex) = self.fx.texture(r, vfs, "pok3.tga") else { return };
+        for _ in 0..4 {
+            self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let f = |shift: u32| ((self.spark_seed >> shift) & 0xff) as f32 / 255.0 * 2.0 - 1.0;
+            let drift = glam::Vec3::new(f(0), f(8) * 0.5 + 0.5, f(16)) * 2.0 * ro_render::CELL;
+            let shape = ro_render::Shape::Spark { drift, size: 1.0 + (f(24) + 1.0) * 0.5 };
+            r.procs.push(ro_render::ProcFx { tex, shape, pos, color: [0.8; 3], time_ms: 0.0, duration_ms: 300.0 });
+        }
+    }
+
+    /// Shakes the screen for an effect (after its delay), unless Settings turns that off.
+    fn quake(&mut self, (delay, duration): fx::Quake) {
+        if self.settings.screen_shake {
+            let start = std::time::Instant::now() + std::time::Duration::from_millis(delay as u64);
+            self.quakes.push((start, start + std::time::Duration::from_millis(duration as u64)));
         }
     }
 
@@ -7038,6 +7094,14 @@ impl App {
                 self.talk(npc);
             }
         }
+        // `--fx hit`: a hit spark on the player every 400 ms.
+        if self.fx_test == Some("hit") {
+            let now = std::time::Instant::now();
+            if let (Some(p), true) = (self.player.as_ref().map(|p| p.actor.pos), self.fx_test_next.is_none_or(|t| now >= t)) {
+                self.fx_test_next = Some(now + std::time::Duration::from_millis(400));
+                self.hit_spark(p);
+            }
+        }
         // `--fx skill:<id>`: replay a skill's effect on the player every 1.5 seconds (a
         // timer rather than waiting for quiet, which maps with lasting effects never are).
         if let Some(id) = self.fx_test.and_then(|n| n.strip_prefix("skill:")).and_then(|n| n.parse::<u16>().ok()) {
@@ -7171,7 +7235,7 @@ impl App {
                 p.fit_pose(r);
                 let a = p.update(dt, w, octant, idle);
                 tracing::trace!(x = a.pos.x / ro_render::CELL, z = a.pos.z / ro_render::CELL, dt, cell = ?p.walker.cell, next = ?p.walker.next(), "walk trace");
-                r.camera.target = a.pos;
+                r.camera.target = a.pos + quake_offset(&mut self.quakes, &mut self.quake_flip, r.camera.yaw);
                 let level = self.hud.status.base_level >= AURA_LEVEL as i64;
                 p.aura_ms = auras.push(r, self.hat_auras.get(&self.account_id).copied(), level, &a, p.aura_ms + dt, self.account_id);
                 r.actors.push(a);
@@ -8682,6 +8746,9 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         ctrl: false,
         shift: false,
         prayer_at: 0,
+        quakes: vec![],
+        quake_flip: false,
+        spark_seed: 1,
         screenshot: false,
         emote_win: Default::default(),
         shortcut_win: Default::default(),
@@ -8886,6 +8953,27 @@ fn attack_group(r: &ro_render::Renderer, a: &ro_render::Actor) -> usize {
     match a.weapon.first() {
         Some(&w) if !r.action_visible(w, 10) && r.action_visible(w, 11) => 11,
         _ => 10,
+    }
+}
+
+#[cfg(test)]
+mod quake_tests {
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn jolts_flip_sides_while_a_quake_runs() {
+        let now = Instant::now();
+        let (mut flip, yaw) = (false, 0.0);
+        let mut quakes = vec![(now + Duration::from_secs(5), now + Duration::from_secs(6))];
+        assert_eq!(super::quake_offset(&mut quakes, &mut flip, yaw), glam::Vec3::ZERO, "not started yet");
+        quakes.push((now, now + Duration::from_secs(5)));
+        let a = super::quake_offset(&mut quakes, &mut flip, yaw);
+        let b = super::quake_offset(&mut quakes, &mut flip, yaw);
+        assert!(a.x > 0.0 && b.x < 0.0 && a.y == 0.0);
+        assert!((0.075..=0.125).contains(&(a.x / ro_render::CELL)));
+        quakes = vec![(now - Duration::from_secs(2), now - Duration::from_secs(1))];
+        assert_eq!(super::quake_offset(&mut quakes, &mut flip, yaw), glam::Vec3::ZERO);
+        assert!(quakes.is_empty(), "finished quakes are dropped");
     }
 }
 

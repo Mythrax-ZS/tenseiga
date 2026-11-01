@@ -81,6 +81,9 @@ pub enum Shape {
     Motes { drift: Vec3, size: f32 },
     /// A flat rectangle on the ground, `size` cells across (skill areas being cast).
     Area { size: (f32, f32) },
+    /// A camera-facing fleck of a hit spark, a cell above `pos`, flying along `drift` and
+    /// flickering, `size` cells across (the original's EF_HIT1: four of effect\pok3.tga).
+    Spark { drift: Vec3, size: f32 },
     /// One layer of the level 99 aura, held under its owner while it stands in view
     /// (`time_ms` runs from when it appeared; `seed` varies the sparkles between owners).
     Aura { layer: AuraLayer, seed: u32, style: AuraStyle },
@@ -656,6 +659,20 @@ impl ProcFx {
                 let half = CELL * size * 0.5;
                 let (a, b) = ((right * c + up * s) * half, (up * c - right * s) * half);
                 let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color };
+                let (p0, p1, p2, p3) = (v(centre - a - b, 0.0, 1.0), v(centre + a - b, 1.0, 1.0), v(centre + a + b, 1.0, 0.0), v(centre - a + b, 0.0, 0.0));
+                out.extend([p0, p1, p2, p0, p2, p3]);
+            }
+            Shape::Spark { drift, size } => {
+                let centre = self.pos + Vec3::new(0.0, CELL, 0.0) + drift * t;
+                let fwd = (centre - eye).normalize_or_zero();
+                let right = fwd.cross(Vec3::Y).normalize_or_zero();
+                let up = right.cross(fwd);
+                // Grows in, shrinks out; flickers on alternate 40 ms beats ("sparkling").
+                let half = CELL * size * 0.5 * (t * std::f32::consts::PI).sin().max(0.3);
+                let flicker = if (self.time_ms / 40.0) as i32 % 2 == 0 { 1.0 } else { 0.55 };
+                let c = [color[0], color[1], color[2], color[3] * flicker];
+                let (a, b) = (right * half, up * half);
+                let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color: c };
                 let (p0, p1, p2, p3) = (v(centre - a - b, 0.0, 1.0), v(centre + a - b, 1.0, 1.0), v(centre + a + b, 1.0, 0.0), v(centre - a + b, 0.0, 0.0));
                 out.extend([p0, p1, p2, p0, p2, p3]);
             }

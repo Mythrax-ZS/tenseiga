@@ -86,7 +86,9 @@ epute*.bson)
 - [x] Traps (Hunter and 3rd-job trap units) are the original's trap models (data\model\외부소품\트랩*, event\3차트랩_*) on their cell, not a looping effect; Fire Pillar's waiting unit shows its red column. Others' hunter traps stay hidden, as rAthena's renewal traps_setting sends them as invisible units
 - [x] Identified items kept their unidentified icon (icons were cached per item id); unidentified looks are now kept apart
 - [x] NPCs drawn with a monster sprite (object type 12, e.g. the Twin Flames fox Kohaku) were not clickable and had no name
-- [x] `specialeffect` (ZC_NOTIFY_EFFECT2): 110 EF_* ids matched to STR files, plus the most-used code-drawn ones (heal, grand cross, steal, bash, ...) shown with their skill effect; the hit sparks and screen quake still missing
+- [x] `specialeffect` (ZC_NOTIFY_EFFECT2): 110 EF_* ids matched to STR files, plus the most-used code-drawn ones (heal, grand cross, steal, bash, ...) shown with their skill effect
+- [x] Hit sparks: a normal hit landing on a monster bursts four flecks of effect\pok3.tga from it (EF_HIT1, as roBrowser spawns it; `--fx hit` previews it on the player)
+- [~] Screen quake: the camera jolts a tenth of a cell side to side each frame during Meteor Storm, Earth Spike, Heaven's Drive, Acid Terror, Acid Demonstration, Pressure, Magic Crasher, Falcon Assault, Gravitation Field, monster Earthquake and Dragon Fear, and the matching specialeffect ids (EF_SCREEN_QUAKE among them), with roBrowser's delays and lengths; Settings > Game > Effects turns it off. Unit-tested only
 - [x] NPC classes whose sprite iRO lacks (e.g. 10243 4_m_drzonda01, Zonda teleporters) get a stand-in body so they stay usable
 - Note: `setnpcdisplay` to a monster class makes rAthena send class 0 (a Novice); the original client shows the same
 - [x] ZC_ACK_REQNAMEALL: party, guild and rank under player names
