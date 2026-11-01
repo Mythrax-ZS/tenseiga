@@ -209,6 +209,7 @@ impl Hud {
 
     /// A chat line in the colour a script asked for (npctalk, announce), if any.
     pub fn push_chat_coloured(&mut self, kind: ChatKind, text: String, rgb: Option<[u8; 3]>) {
+        tracing::debug!(?kind, %text, "chat");
         self.chat.push_back((kind, text, rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b))));
         while self.chat.len() > CHAT_LINES {
             self.chat.pop_front();
