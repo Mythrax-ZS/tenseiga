@@ -207,6 +207,9 @@ pub enum StorageRequest {
     Put { index: u16, amount: u32 },
     /// Storage index -> inventory.
     Take { index: u16, amount: u32 },
+    /// CZ_MOVE_ITEM_TO_PERSONAL: storage index -> the inventory's favourites tab (the
+    /// original's Shift+right-click in storage).
+    TakeFavorite { index: u16, amount: u32 },
     Close,
 }
 
@@ -215,6 +218,12 @@ impl Encode for StorageRequest {
         match *self {
             StorageRequest::Put { index, amount } => put_db_packet(d, "MoveToKafra", &[&index.to_le_bytes(), &amount.to_le_bytes()]),
             StorageRequest::Take { index, amount } => put_db_packet(d, "MoveFromKafra", &[&index.to_le_bytes(), &amount.to_le_bytes()]),
+            StorageRequest::TakeFavorite { index, amount } => {
+                d.put_u16_le(crate::client_packet("MoveFromKafraFav").opcode);
+                d.put_u32_le(0);
+                d.put_u16_le(index);
+                d.put_u32_le(amount);
+            }
             StorageRequest::Close => d.put_u16_le(0x0193),
         }
     }

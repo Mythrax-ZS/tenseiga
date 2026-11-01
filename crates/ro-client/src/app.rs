@@ -57,6 +57,7 @@ mod emblem;
 mod emotes;
 mod settings;
 mod keybinds;
+mod packages;
 mod padglyph;
 mod perf;
 mod haptics;
@@ -1042,6 +1043,8 @@ struct App {
     pending_skill: Option<(u16, u16, u32, u8)>,
     /// The monster we keep attacking, and our reach (cells) once the server tells us.
     attack: Option<(u32, i16)>,
+    /// How many lines of the Super Novice prayer have been said in a row.
+    prayer_at: usize,
     /// Walking toward the attack target after the server said it was out of reach.
     chasing: bool,
     /// Floating damage numbers: (world position, text, colour, age ms).
@@ -1241,6 +1244,8 @@ struct App {
     shortcut_win: shortcuts::ShortcutWindow,
     /// Shortcut Settings: which key does what.
     key_win: keybinds::KeyWindow,
+    /// Selectable item packages: the set picked when one is used.
+    packages: packages::Packages,
     queued_action: Option<windows::UiAction>,
     /// A pointer move the test script queued (UI points); egui keeps the position.
     fake_pointer: Option<egui::Pos2>,
@@ -4313,10 +4318,18 @@ impl App {
         use windows::UiAction::*;
         match a {
             UseItem(index) => {
-                // Book items open locally, as the original (no use request is sent).
-                match self.inventory.items.get(&index).map(|i| i.id).filter(|id| self.books.is_book(*id)) {
-                    Some(id) => self.open_book(id, 1),
-                    None => self.send(Command::Item(ItemRequest::Use { index, account_id: self.account_id })),
+                let id = self.inventory.items.get(&index).map(|i| i.id);
+                self.packages.ensure_loaded(self.vfs.as_ref());
+                match id {
+                    // Book items open locally, as the original (no use request is sent).
+                    Some(id) if self.books.is_book(id) => self.open_book(id, 1),
+                    // Selectable packages ask which set first (CZ_USE_PACKAGEITEM, not a use).
+                    Some(id) if self.packages.contents(id).is_some() => {
+                        let items = self.packages.contents(id).unwrap_or_default();
+                        self.load_icons_for(&items);
+                        self.packages.open(index, id);
+                    }
+                    _ => self.send(Command::Item(ItemRequest::Use { index, account_id: self.account_id })),
                 }
             }
             Equip { index, location } => self.send(Command::Item(ItemRequest::Equip { index, location })),
@@ -5289,6 +5302,13 @@ impl App {
                 }
             }
             "/emo" | "/emotion" => self.emote_win.open = !self.emote_win.open,
+            // CZ_DORIDORI: the head shake's SP regen bonus (Super Novice, or a resting Taekwon
+            // line); the head itself doesn't turn here.
+            "/doridori" => self.send(ro_net::Command::Bare("NoviceDoriDori")),
+            // Out of a costume status (wedding, Xmas, summer, dress-up, hanbok, Oktoberfest).
+            "/changedress" | "/nocosplay" => self.send(ro_net::Command::Bare("changedress")),
+            // CZ_RESET_SKILL runs rAthena's @resetskill, so it needs that GM permission.
+            "/resetskill" => self.send(ro_net::Command::Bare("reset_skill")),
             "/aura2" => {
                 self.settings.aura_off = !self.settings.aura_off;
                 notes.push(if self.settings.aura_off { say(2995, "Aura effect is OFF") } else { say(2994, "Aura effect is ON") });
@@ -5327,10 +5347,28 @@ impl App {
     }
 
     /// Sends a chat line, handling the client's own commands (whispers, emotes, /where...).
+    /// A Super Novice's prayer to the guardian angel (msgstringtable 790-793), said line by line
+    /// in public chat: true once its last line is said, when the client asks for Critical
+    /// Explosion (CZ_CHOPOKGI; rAthena grants it at each tenth of the base level's experience).
+    fn prayer(&mut self, line: &str) -> bool {
+        const SUPER_NOVICES: [i16; 4] = [23, 4045, 4190, 4191];
+        if !SUPER_NOVICES.contains(&self.hud.status.job_id) || line.starts_with('/') {
+            self.prayer_at = 0;
+            return false;
+        }
+        let say = |id: usize, en: &str| msgstr::get(id, &[]).unwrap_or_else(|| en.to_string());
+        let lines = [say(790, "Dear angel, can you hear my voice?"), format!("{} {} {}", say(791, "I am"), self.hud.status.name, say(792, "Super Novice~")), say(793, "Help me out~ Please~ T_T")];
+        let said = |i: usize| line.trim().eq_ignore_ascii_case(lines[i].trim());
+        let next = if said(self.prayer_at) { self.prayer_at + 1 } else { said(0) as usize };
+        self.prayer_at = next % lines.len();
+        next == lines.len()
+    }
+
     fn submit_chat(&mut self, text: String) {
         if self.client_command(&text) {
             return;
         }
+        let prayed = self.prayer(&text);
         let Some((tx, _)) = self.net.as_ref() else { return };
             // "/p text" goes to the party, "/g text" to the guild.
             let speaker = self.hud.status.name.clone();
@@ -5453,6 +5491,9 @@ impl App {
             };
             if let Some(cmd) = cmd {
                 let _ = tx.send(cmd);
+            }
+            if prayed {
+                let _ = tx.send(ro_net::Command::Bare("NoviceExplosionSpirits"));
             }
             if let Some((kind, line)) = note {
                 self.hud.push_chat(kind, line);
@@ -5864,7 +5905,10 @@ impl App {
                     }
                 }
                 if f.just(East) {
-                    self.attack = None;
+                    // CZ_CANCEL_LOCKON: the server stops its auto-attack too.
+                    if self.attack.take().is_some() {
+                        self.send(ro_net::Command::Bare("StopAttack"));
+                    }
                     self.chasing = false;
                     self.pending_skill = None;
                     self.pending_pickup = None;
@@ -7673,6 +7717,9 @@ impl App {
                 if let Some(v) = self.merge.show(ui.ctx(), &self.inventory.items, self.item_db.as_ref(), &self.icons) {
                     self.queued_commands.push(ro_net::Command::Merge(v));
                 }
+                if let Some((index, item, set)) = self.packages.show(ui.ctx(), self.item_db.as_ref(), &self.icons) {
+                    self.queued_commands.push(ro_net::Command::Item(ro_net::ItemRequest::UsePackage { index, account_id: self.account_id, item, set }));
+                }
                 if let Some((inviter, accept)) = self.guild.show_offer(ui.ctx()) {
                     self.queued_commands.push(ro_net::Command::Relation(ro_net::RelationRequest::Answer { inviter, accept }));
                 }
@@ -8634,10 +8681,12 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         alt: false,
         ctrl: false,
         shift: false,
+        prayer_at: 0,
         screenshot: false,
         emote_win: Default::default(),
         shortcut_win: Default::default(),
         key_win: Default::default(),
+        packages: Default::default(),
         queued_action: None,
         fake_pointer: None,
         fake_click: None,

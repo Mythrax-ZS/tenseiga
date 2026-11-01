@@ -160,6 +160,17 @@ pub(crate) fn put_db_packet(d: &mut BytesMut, handler: &str, fields: &[&[u8]]) {
     }
 }
 
+/// As `Bare`, but by rAthena handler, from the packet db (zero-padded to its length):
+/// CZ_CANCEL_LOCKON ("StopAttack"), CZ_DORIDORI ("NoviceDoriDori"), CZ_CHOPOKGI
+/// ("NoviceExplosionSpirits"), /changedress ("changedress"), /resetskill ("reset_skill").
+pub struct BareDb(pub &'static str);
+
+impl Encode for BareDb {
+    fn encode(&self, d: &mut BytesMut) {
+        put_db_packet(d, self.0, &[&[]]);
+    }
+}
+
 /// CZ_ENTER
 pub struct CzEnter {
     pub account_id: u32,
@@ -485,6 +496,17 @@ pub fn parse_accept_enter(data: &[u8]) -> AcceptEnter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bare_requests_are_their_opcode() {
+        let enc = |h| {
+            let mut b = BytesMut::new();
+            BareDb(h).encode(&mut b);
+            b.to_vec()
+        };
+        assert_eq!(enc("StopAttack"), [0x18, 0x01]);
+        assert_eq!(enc("reset_skill"), [0xb1, 0x0b, 0]);
+    }
 
     #[test]
     fn sizes() {

@@ -296,7 +296,7 @@ impl Social {
             .default_pos(egui::pos2(60.0, 280.0))
             .show(ctx, |ui| {
                 // Items move by double-click or by dragging them to the other column (from
-                // the inventory window too).
+                // the inventory window too). The bool is a Shift+right-click: to the favourites tab.
                 let row = |ui: &mut egui::Ui, id: u32, amount: u16, drag: StorageDrag, tip: &str| {
                     let r = ui
                         .horizontal(|ui| {
@@ -311,11 +311,8 @@ impl Social {
                     if r.drag_started() {
                         r.dnd_set_drag_payload(drag.clone());
                     }
-                    if r.on_hover_text(tip).double_clicked() {
-                        Some(drag)
-                    } else {
-                        None
-                    }
+                    let favorite = r.secondary_clicked() && ui.input(|i| i.modifiers.shift);
+                    (r.on_hover_text(tip).double_clicked() || favorite).then_some((drag, favorite))
                 };
                 let mut moved = vec![];
                 ui.columns(2, |cols| {
@@ -324,7 +321,11 @@ impl Social {
                         ui.set_min_size(Vec2::new(ui.available_width(), 300.0));
                         egui::ScrollArea::vertical().id_salt("st").max_height(300.0).show(ui, |ui| {
                             for it in self.storage.items.values() {
-                                moved.extend(row(ui, it.id, it.amount, StorageDrag::Take(it.index, it.amount), "Double-click or drag to take"));
+                                // Shift+right-click: into the inventory's favourites tab, as the original.
+                                match row(ui, it.id, it.amount, StorageDrag::Take(it.index, it.amount), "Double-click or drag to take; Shift+right-click to put it in the inventory's favourites") {
+                                    Some((_, true)) => out.push(Command::Storage(StorageRequest::TakeFavorite { index: it.index, amount: it.amount as u32 })),
+                                    r => moved.extend(r.map(|(d, _)| d)),
+                                }
                             }
                         });
                     });
@@ -334,7 +335,7 @@ impl Social {
                         ui.set_min_size(Vec2::new(ui.available_width(), 300.0));
                         egui::ScrollArea::vertical().id_salt("inv").max_height(300.0).show(ui, |ui| {
                             for it in c.inventory.iter().filter(|i| i.equipped == 0) {
-                                moved.extend(row(ui, it.id, it.amount, StorageDrag::Put(it.index, it.amount), "Double-click or drag to store"));
+                                moved.extend(row(ui, it.id, it.amount, StorageDrag::Put(it.index, it.amount), "Double-click or drag to store").filter(|(_, fav)| !fav).map(|(d, _)| d));
                             }
                         });
                     });

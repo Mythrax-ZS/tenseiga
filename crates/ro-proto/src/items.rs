@@ -192,6 +192,9 @@ pub enum ItemRequest {
     UnequipAll { location: u32 },
     /// CZ_INVENTORY_TAB: move to (on) or out of the favourites tab.
     Favorite { index: u16, on: bool },
+    /// CZ_USE_PACKAGEITEM: open a selectable package, taking its set `set` (the client
+    /// table's box index, rAthena's item_packages.yml group).
+    UsePackage { index: u16, account_id: u32, item: u32, set: u32 },
     /// Inventory expansion: ask (0x0b14), confirm (0x0b16) or cancel (0x0b19).
     ExpandAsk,
     ExpandConfirm(bool),
@@ -213,6 +216,13 @@ impl Encode for ItemRequest {
                 d.put_u32_le(location);
             }
             ItemRequest::Unequip { index } => put_db_packet(d, "UnequipItem", &[&index.to_le_bytes()]),
+            ItemRequest::UsePackage { index, account_id, item, set } => {
+                d.put_u16_le(crate::client_packet("itempackage_select").opcode);
+                d.put_u16_le(index);
+                d.put_u32_le(account_id);
+                d.put_u32_le(item);
+                d.put_u32_le(set);
+            }
             ItemRequest::ExpandAsk => d.put_u16_le(0x0b14),
             ItemRequest::ExpandConfirm(yes) => d.put_u16_le(if yes { 0x0b16 } else { 0x0b19 }),
             ItemRequest::Favorite { index, on } => {
@@ -442,6 +452,7 @@ mod tests {
         };
         assert_eq!(size(&ItemRequest::Use { index: 2, account_id: 9 }), client_packet("UseItem").len as usize);
         assert_eq!(size(&ItemRequest::PickUp { floor_id: 3 }), client_packet("TakeItem").len as usize);
+        assert_eq!(size(&ItemRequest::UsePackage { index: 2, account_id: 9, item: 101060, set: 1 }), client_packet("itempackage_select").len as usize);
         assert_eq!(size(&ItemRequest::Equip { index: 2, location: 256 }), 8);
         assert_eq!(size(&StatRequest::Raise(13)), client_packet("StatusUp").len as usize);
         assert_eq!(size(&StatRequest::RaiseTrait(219)), client_packet("traitstatus_up").len as usize);
