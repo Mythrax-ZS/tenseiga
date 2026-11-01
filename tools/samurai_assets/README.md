@@ -171,6 +171,31 @@ Structural validation cannot prove art style, correct direction, foot alternatio
 weapon grip anatomy or convincing animation. Inspect those, the end-to-start walk
 transition, source clipping flags, and the live client before release.
 
+## Separating the head
+
+The generated frames draw the head and ponytail into the body. `separate_head.py`
+turns the compiled body into an official-style one, after `compile.py` and
+`compile_weapons.py`:
+
+```powershell
+py tools/samurai_assets/separate_head.py fit target/samurai-review --reference-head <folder>
+py tools/samurai_assets/separate_head.py build target/samurai-review --output target/samurai-head
+py tools/samurai_assets/separate_head.py install target/samurai-head
+```
+
+`fit` lays an official male head over each frame's drawn head to find the head
+anchor (then lowers it onto the shoulders, as official bodies seat their heads),
+and records the official hair-colour shades and head-turn offsets. Its folder
+holds `2_남.spr/.act` and `머리2_남_1..8.pal` extracted from the game data; they
+are never committed. The result, with any hand corrections, is
+`artwork/head_cut.json`: per frame `centre_window` bounds the fit, `cut` and
+`keep` rectangles add to or protect from the cut, and `anchor_override` replaces
+the anchor. `build` cuts the head and hair out, fills the coat they covered,
+writes an indexed body with one palette range per material, the clothes dyes,
+hairstyle 43 and its hair colours, and `review_frames.png` (original, body,
+body with hairstyle 43, body with the reference head). `install` copies it into
+`overlays/samurai` and pads the weapon timelines to the body's frame counts.
+
 ## Format implementation provenance
 
 `ro_formats.py` is copied from the workspace's original

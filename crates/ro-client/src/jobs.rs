@@ -184,8 +184,11 @@ pub const GM_SPRITE: &str = "운영자";
 
 pub fn appearance(sprite: &str, male: bool) -> Option<Appearance> {
     if sprite == crate::samurai::SPRITE {
-        // This package contains the male artwork only. The job-change NPC enforces it.
-        return male.then(|| Appearance { body: crate::samurai::BODY.into(), attachments: false });
+        // A body without its head, like official ones: the player's head and headgear attach at
+        // its anchors, and clothes dyes are data\palette\몸\samurai_남_N.pal. The Samurai's
+        // own tied-back hair is hairstyle 43 (samurai::HAIRSTYLE). This package contains the
+        // male artwork only; the job-change NPC enforces it.
+        return male.then(|| Appearance { body: crate::samurai::BODY.into(), attachments: true });
     }
     let sex = if male { "남" } else { "여" };
     let race = race_dir(sprite);
