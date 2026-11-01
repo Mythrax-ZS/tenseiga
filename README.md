@@ -42,6 +42,9 @@ PIN codes (`pincode_enabled` in `conf/char_athena.conf`) are supported.
 
 ## Run
 
+To set up the server and the client on another machine (Windows, Linux, Steam Deck or
+Android), see [DEPLOY.md](DEPLOY.md).
+
 ```
 copy config\example.toml config\local.toml    # edit account
 cargo run -p ro-client -- --headless          # protocol smoke test
