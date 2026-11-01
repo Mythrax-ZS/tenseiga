@@ -77,7 +77,7 @@ epute*.bson)
 - [x] Store search (Universal Catalog: search, pages, click to locate)
 - [x] ZC_ACK_OPENSTORE2
 - [x] Ranking window (ZC_ACK_RANKING2 + names by char id; /blacksmith /alchemist /taekwon /pk)
-- [x] ZC_CONGRATULATION, ZC_DIVORCE (chat notices; no wedding effect yet)
+- [x] ZC_CONGRATULATION: the wedding ceremony's effect (EF_COLORPAPER, also `@effect 347`), coloured paper showering down on the couple to effect\wedding.wav, drawn in code as the original does; tested with @effect. ZC_DIVORCE: a chat notice
 - [x] ZC_BAN_LIST
 
 ## Found while testing
