@@ -738,6 +738,8 @@ struct Mob {
     hp: Option<(i32, i32)>,
     /// Player-sprite appearance (None for NPCs and monsters).
     look: Option<Look>,
+    /// The costume a status dresses the player in (`costume_job`), drawn over `look`.
+    costume: Option<i16>,
     /// Players: (party, guild, guild rank) from ZC_ACK_REQNAMEALL, shown under the name.
     titles: Option<(String, String, String)>,
     /// Unit class (job / monster id).
@@ -805,6 +807,7 @@ impl Mob {
             dying: None,
             hp: None,
             look: None,
+            costume: None,
             titles: None,
             class: 0,
             guild: 0,
@@ -1643,7 +1646,14 @@ impl App {
             m.look.clone()
         }).flatten() else { return };
         look.job = if gm { jobs::GM_SPRITE.to_string() } else { job_sprite(class).to_string() };
-        let Some(fresh) = self.player_actor(&look) else { return };
+        self.redress(id, look);
+    }
+
+    /// Rebuilds a player's layers from their look, in their costume if they wear one, keeping
+    /// position, pose and timing, and keeps the look.
+    fn redress(&mut self, id: u32, look: Look) {
+        let costume = self.mob_mut(id).and_then(|m| m.costume);
+        let Some(fresh) = self.player_actor(&dressed(look.clone(), costume)) else { return };
         if let Some(m) = self.mob_mut(id) {
             (m.actor.body, m.actor.head, m.actor.headgear, m.actor.weapon) = (fresh.body, fresh.head, fresh.headgear, fresh.weapon);
             m.look = Some(look);
@@ -1671,12 +1681,7 @@ impl App {
             7 => look.clothes_color = value as u16,
             _ => return,
         }
-        let Some(fresh) = self.player_actor(&look) else { return };
-        if let Some(m) = self.mob_mut(id) {
-            // Keep position, pose and timing; swap the layers.
-            (m.actor.body, m.actor.head, m.actor.headgear, m.actor.weapon) = (fresh.body, fresh.head, fresh.headgear, fresh.weapon);
-            m.look = Some(look);
-        }
+        self.redress(id, look);
     }
 
     /// A unit came into view or started walking.
@@ -1720,8 +1725,9 @@ impl App {
             clothes_color: info.clothes_color.max(0) as u16,
             gear: info.look,
         });
+        let costume = costume_job(info.option);
         let actor = match &look {
-            Some(l) => self.player_actor(l),
+            Some(l) => self.player_actor(&dressed(l.clone(), costume)),
             None => self.class_actor(info.job),
         };
         let Some(actor) = actor else { return };
@@ -1739,6 +1745,7 @@ impl App {
         mob.actor.head_dir = info.head_dir;
         mob.human = is_player_class(info.job);
         mob.look = look;
+        mob.costume = costume;
         mob.font = info.font;
         mob.yellow = self.yellow_name(info.id, info.font);
         if let ro_net::UnitPos::Walking { from, to } = info.pos {
@@ -3434,8 +3441,17 @@ impl App {
             Font { id, font } => self.font_change(id, font),
             UnitOption { id, option } => {
                 let me = id == self.account_id;
+                let costume = costume_job(option);
+                let mut changed = None;
                 if let Some(m) = self.mob_mut(id) {
                     m.actor.alpha = option_alpha(option, me);
+                    if m.costume != costume {
+                        m.costume = costume;
+                        changed = m.look.clone();
+                    }
+                }
+                if let Some(look) = changed {
+                    self.redress(id, look);
                 }
             }
             GroundEffect { id, cell, kind } => {
@@ -9246,6 +9262,26 @@ impl AuraTextures {
         }
         time_ms
     }
+}
+
+/// The costume an OPTION_* state dresses a player in, as a job: wedding, Xmas, summer, hanbok,
+/// Oktoberfest, summer 2 (rAthena's @costume and the wedding). The original client swaps the
+/// body itself; the server sends no job change for it.
+fn costume_job(option: u32) -> Option<i16> {
+    [(0x1000, 22), (0x1_0000, 26), (0x4_0000, 27), (0x0800_0000, 28), (0x1000_0000, 29), (0x2000_0000, 30)]
+        .into_iter()
+        .find(|&(bit, _)| option & bit != 0)
+        .map(|(_, job)| job)
+}
+
+/// A look in its costume: the costume's body, and no weapon or shield.
+fn dressed(mut look: Look, costume: Option<i16>) -> Look {
+    // shortcut: Doram keep their own body (their few costume sprites live under 도람족), until wanted.
+    if let Some(job) = costume.filter(|_| jobs::race_dir(&look.job) != "도람족") {
+        look.job = job_sprite(job).to_string();
+        (look.gear.weapon, look.gear.shield) = (0, 0);
+    }
+    look
 }
 
 /// How opaque a unit is under its OPTION_* flags. Hiding, cloaking and Chase Walk show
