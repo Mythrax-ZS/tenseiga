@@ -247,6 +247,21 @@ mod tests {
     }
 
     #[test]
+    fn walking_carries_the_head_as_official_bodies_do() {
+        // Official walks move the head anchor straight up and down by at most 3 px. The drawn
+        // walk frames had placed the torso, and the head on it, a little apart every step.
+        let path = overlay_path().expect("bundled Samurai overlay").join(BODY.replace('\\', "/"));
+        let act = ro_formats::act::Act::parse(&std::fs::read(path.with_extension("act")).unwrap()).unwrap();
+        for d in 0..8 {
+            let frames = &act.actions[8 + d].frames;
+            let (xs, ys): (Vec<i32>, Vec<i32>) = frames.iter().map(|f| (f.anchors[0][0], f.anchors[0][1])).unzip();
+            assert_eq!(xs.iter().min(), xs.iter().max(), "walking {d}: the head moves across");
+            let bob = ys.iter().max().unwrap() - ys.iter().min().unwrap();
+            assert!(bob <= 3, "walking {d}: the head bobs {bob} px");
+        }
+    }
+
+    #[test]
     fn starter_item_metadata_resolves_to_the_matching_katana_view() {
         let path = overlay_path().unwrap().join("System/samurai_iteminfo.lua");
         let entries = crate::customdata::iteminfo(&std::fs::read(&path).unwrap(), "samurai_iteminfo.lua", &|_| None);

@@ -16,6 +16,9 @@ The game job is **Samurai** (4500); **Ember Ronin** remains the asset filename.
   (official heads anchor 17 px higher attacking west than east).
 - Arms raised past the head stay with the body, so an official head sits
   between them in the overhead swings.
+- Walking, the torso holds one line and bobs 0-2 px with the stride, as official
+  bodies do, and the head anchor rides it straight up and down. The body keeps a
+  neck under the head's place, so no background shows between chin and collar.
 - The Samurai's own tied-back hair, with its red ribbon, is hairstyle 43
   (`data/sprite/인간족/머리통/{남,여}/43_*`), cut from the original artwork. Its
   hair colours 0-8 (`data/palette/머리/머리43_*_N.pal`) take the official hair
