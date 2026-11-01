@@ -40,6 +40,13 @@ pub mod flag {
     pub const CAUSTICS: u32 = 1 << 10;
     /// Actors standing in the water: contact foam, ripple rings and wakes.
     pub const INTERACT: u32 = 1 << 11;
+    /// Molten rock instead of water (RSW water types 4 and 6), set per map by `Water::update`.
+    pub const LAVA: u32 = 1 << 12;
+}
+
+/// RSW water types whose RO texture is lava: 4 molten, 6 cooling crust with glowing cracks.
+pub fn is_lava(kind: i32) -> bool {
+    matches!(kind, 4 | 6)
 }
 
 /// Ripple rings and wading actors the uniform carries (water.wgsl `MAX_RIPPLES` / `MAX_WADERS`).
@@ -796,20 +803,34 @@ impl Water {
         }
     }
 
+    /// Molten rock: lit from within, with no reflections, foam or wading (the Classic preset
+    /// keeps RO's own texture).
+    pub fn lava(&self) -> bool {
+        is_lava(self.mesh.water.kind)
+    }
+
     /// Writes this frame's uniform. `sky_scale` dims reflections with the night.
     pub fn update(&self, queue: &wgpu::Queue, s: &WaterSettings, sun: [f32; 3], sky_scale: f32) {
         let w = &self.mesh.water;
+        let mut flags = s.flags() & !debug_mask();
+        let mut waves = [s.wave_amplitude, s.wave_length.max(4.0), s.wave_steepness.clamp(0.0, 1.0), s.wave_speed];
+        if self.lava() && s.normal_map {
+            use flag::*;
+            flags = (flags & !(REFLECTION | SSR | ABSORPTION | FOAM | SPECULAR | CAUSTICS | INTERACT)) | LAVA;
+            // A thick, slow swell.
+            waves = [waves[0] * 0.25, waves[1] * 1.6, waves[2] * 0.3, waves[3] * 0.2];
+        }
         let u = Uniform {
             level: [-w.level, w.wave_height, w.wave_speed, w.wave_pitch],
             map: [self.anim_speed, self.mesh.size.0 as f32 * self.mesh.zoom, self.mesh.size.1 as f32 * self.mesh.zoom, self.mesh.zoom],
-            flags: [s.flags() & !debug_mask(), s.ssr_steps.min(64), self.ripples.len() as u32, self.waders.len() as u32],
+            flags: [flags, s.ssr_steps.min(64), self.ripples.len() as u32, self.waders.len() as u32],
             absorb: [s.absorption_coeff[0], s.absorption_coeff[1], s.absorption_coeff[2], s.depth_scale],
             scatter: [s.scatter_color[0], s.scatter_color[1], s.scatter_color[2], s.classic_mix],
             foam_color: [s.foam.color[0], s.foam.color[1], s.foam.color[2], s.foam.intensity],
             foam: [s.foam.falloff.max(0.01), s.foam.speed, s.foam.scale.max(1.0), s.foam.crest],
             optics: [s.refraction_strength, s.reflection_strength, s.ssr_distance, s.shininess],
             normal: [s.normal_strength, s.normal_tiling.max(1.0), s.normal_speed, 0.0],
-            waves: [s.wave_amplitude, s.wave_length.max(4.0), s.wave_steepness.clamp(0.0, 1.0), s.wave_speed],
+            waves,
             sky: [self.mean_sky[0], self.mean_sky[1], self.mean_sky[2], sky_scale],
             sun: [sun[0], sun[1], sun[2], s.sun_intensity],
             ripples: {

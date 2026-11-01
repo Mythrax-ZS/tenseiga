@@ -1349,7 +1349,8 @@ impl Renderer {
                 None => [0.0; 4],
             },
             water: match &self.water {
-                Some(w) if self.water_settings.interaction => [w.level(), 1.0, CELL / sprite::PIXELS_PER_CELL, 0.0],
+                // Nothing wades into lava.
+                Some(w) if self.water_settings.interaction && !w.lava() => [w.level(), 1.0, CELL / sprite::PIXELS_PER_CELL, 0.0],
                 _ => [0.0; 4],
             },
             water_tint: {

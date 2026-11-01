@@ -73,6 +73,7 @@ const F_CLASSIC: u32 = 256u;
 const F_SPECULAR: u32 = 512u;
 const F_CAUSTICS: u32 = 1024u;
 const F_INTERACT: u32 = 2048u;
+const F_LAVA: u32 = 4096u;
 // Keep in sync with water.rs.
 const RIPPLE_LIFE: f32 = 2.2;
 
@@ -315,6 +316,56 @@ fn disturb(p: vec2<f32>, t: f32) -> vec3<f32> {
     return vec3(slope, foam);
 }
 
+// Molten rock (F_LAVA, RSW water types 4 and 6): opaque and lit from within. RO's own lava
+// frames creep under a slow domain warp; dark crust plates (the cellular pattern's cells)
+// drift on the melt with hot seams between them; a band of cooled crust and a glowing rim
+// form where it meets the rock; and the heat swells and ebbs. It runs over the HDR range,
+// so bloom makes it glow.
+fn lava(in: VsOut, shore_dist: f32, wet: f32, screen_uv: vec2<f32>) -> vec4<f32> {
+    let t = g.params.x;
+    let p = in.world.xz;
+    // The flow: a large, slowly moving warp bends everything below it. Taken from a coarse
+    // mip, so only the broad swells of the ripple pattern bend it (no fine streaks).
+    let wuv = p / 67.0 + vec2(0.0035, 0.0022) * t;
+    let warp = textureSampleLevel(detail, wrap, wuv, 4.0).rg * 2.0 - 1.0;
+    let muv = in.tile / 4.0 + warp * 0.10 + vec2(0.005, 0.003) * t;
+    let melt = srgb_to_linear(textureSampleGrad(frame_tex, wrap, muv, dpdx(muv), dpdy(muv)).rgb);
+    // Heat, 0..1: the melt's own brightness, a slow swell across it, a hot seam between
+    // the crust plates, less under the plates (more of them toward the shore, where it has
+    // cooled). The colour comes from heat along a glowing-metal ramp, so it never clips to
+    // flat red.
+    let heat_uv = p / 151.0 - vec2(0.002, 0.0031) * t;
+    let swell = textureSampleLevel(detail, wrap, heat_uv, 3.0).b;
+    let pulse = 0.88 + 0.12 * sin(t * 0.9 + swell * TAU);
+    let lum = dot(melt, vec3(0.55, 0.35, 0.10));
+    let c1uv = p / 21.0 + warp * 0.35 + vec2(0.012, 0.007) * t;
+    let c2uv = p / 34.0 - warp * 0.25 + vec2(-0.005, 0.009) * t;
+    let c1 = textureSampleGrad(detail, wrap, c1uv, dpdx(c1uv), dpdy(c1uv)).a;
+    let c2 = textureSampleGrad(detail, wrap, c2uv, dpdx(c2uv), dpdy(c2uv)).a;
+    let seam = max(c1, c2 * 0.8);
+    let cooled = 1.0 - smoothstep(0.0, 10.0, shore_dist);
+    let cover = mix(0.2, 0.8, cooled) * smoothstep(0.3, 0.7, swell);
+    let plate = (1.0 - smoothstep(0.1, 0.5, seam)) * cover;
+    // RO's molten frames sit at 0.45 (median) to 0.6 in linear light; the crust frames are
+    // mostly dark with cracks up to 0.8.
+    var heat = pow(clamp(lum / 0.62, 0.0, 1.0), 1.8) * (0.75 + 0.4 * swell) * pulse;
+    heat = mix(heat, 0.05 + 0.85 * smoothstep(0.5, 0.95, seam) * pulse, plate);
+    // A thin hot line right against the rock, flickering a little.
+    heat = max(heat, exp(-shore_dist * 2.2) * (0.7 + 0.2 * sin(t * 2.3 + p.x * 0.31 + p.y * 0.27)));
+    // (Tone mapping turns anything much past 1 yellow, so orange stays near it.)
+    var color = mix(vec3(0.025, 0.004, 0.002), vec3(0.42, 0.035, 0.004), smoothstep(0.0, 0.4, heat));
+    color = mix(color, vec3(0.95, 0.20, 0.015), smoothstep(0.35, 0.75, heat));
+    color = mix(color, vec3(1.9, 0.95, 0.28), smoothstep(0.8, 1.0, heat));
+    // The crust is rock: it takes the dungeon's light a little.
+    color += vec3(0.05, 0.035, 0.03) * plate * (1.0 - heat) * (0.6 + 0.8 * c2) * (g.ambient.rgb + g.diffuse.rgb * 0.5);
+    // Feather the edge like the water: barely-covered ground is just ground.
+    let edge = smoothstep(0.0, 1.2, wet);
+    if on(F_REFRACTION) {
+        return vec4(mix(textureSampleLevel(scene_color, clamp_samp, screen_uv, 0.0).rgb, color, edge), 1.0);
+    }
+    return vec4(color, edge);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let t = g.params.x;
@@ -396,6 +447,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var wet = vertical;
     if on(F_REFRACTION) {
         wet = max(scene_dist(screen_uv) - eye_dist, 0.0) * max(v.y, 0.05);
+    }
+
+    if on(F_LAVA) {
+        return lava(in, shore.g * SHORE_RANGE, wet, screen_uv);
     }
 
     // Lighting terms.
