@@ -118,6 +118,14 @@ fn shuffle_dec(b: &mut [u8]) {
     b.copy_from_slice(&[s[3], s[4], s[6], s[0], s[1], s[2], s[5], substitution(s[7])]);
 }
 
+/// GRF 0x1xx file names: each 8-byte block nibble-swapped, then decrypted.
+pub fn decode_name(buf: &mut [u8]) {
+    for block in buf.chunks_exact_mut(8) {
+        block.iter_mut().for_each(|b| *b = b.rotate_left(4));
+        decrypt_block(block);
+    }
+}
+
 /// Flag 0x04: only the first 20 blocks are encrypted.
 pub fn decode_header(buf: &mut [u8]) {
     for block in buf.chunks_exact_mut(8).take(20) {
