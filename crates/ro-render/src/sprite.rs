@@ -76,6 +76,9 @@ pub struct Actor {
     /// Action group (0 idle, 1 walk, 2 sit, ...); the ACT index is `action * 8 + dir`.
     pub action: usize,
     pub dir: Dir,
+    /// Head turned from the body while standing or sitting: 0 straight, 1 right, 2 left
+    /// (players; the idle and sit actions' three frames).
+    pub head_dir: u8,
     /// Milliseconds into the current action.
     pub time_ms: f32,
     /// Play the action once and hold its last frame (death) instead of looping.
@@ -214,9 +217,9 @@ pub(crate) fn actor_quads(sheets: &[Sheet], a: &Actor) -> Vec<(usize, Vec<Vertex
     // animate while idle.
     let still_head = a.head.is_some() && matches!(a.action, 0 | 2);
     let Some(body) = sheets.get(a.body.0) else { return out };
-    // Idle and sitting frames are head-turn poses (straight / left / right) whose anchors
-    // differ, not an animation: hold the pose (straight) for body and head alike.
-    let body_frame = if still_head { 0 } else { body.frame_index(index, a.time_ms, a.once) };
+    // Idle and sitting frames are head-turn poses (straight / right / left) whose anchors
+    // differ, not an animation: hold the head's pose for body and head alike.
+    let body_frame = if still_head { a.head_dir.min(2) as usize } else { body.frame_index(index, a.time_ms, a.once) };
     let Some(bf) = body.frame(index, body_frame) else { return out };
 
     // Facing away (NW/N/NE): the weapon is held in front of the body from the camera's view

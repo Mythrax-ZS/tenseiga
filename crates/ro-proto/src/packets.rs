@@ -171,6 +171,19 @@ impl Encode for BareDb {
     }
 }
 
+/// CZ_CHANGE_DIRECTION ("ChangeDir"): turn in place. `head` 0 straight, 1 / 2 turned
+/// right / left; `dir` the body's direction as the server counts it (see `server_dir`).
+pub struct CzChangeDir {
+    pub head: u8,
+    pub dir: u8,
+}
+
+impl Encode for CzChangeDir {
+    fn encode(&self, d: &mut BytesMut) {
+        put_db_packet(d, "ChangeDir", &[&[self.head], &[self.dir]]);
+    }
+}
+
 /// CZ_ENTER
 pub struct CzEnter {
     pub account_id: u32,
@@ -506,6 +519,9 @@ mod tests {
         };
         assert_eq!(enc("StopAttack"), [0x18, 0x01]);
         assert_eq!(enc("reset_skill"), [0xb1, 0x0b, 0]);
+        let mut b = BytesMut::new();
+        CzChangeDir { head: 2, dir: 6 }.encode(&mut b);
+        assert_eq!(b.to_vec(), [0x61, 0x03, 2, 0, 6]);
     }
 
     #[test]
@@ -639,6 +655,8 @@ pub struct UnitInfo {
     pub level: u16,
     /// Name font (players; 0 for others). Tenseiga reads its GM look from it (see gm_look).
     pub font: u16,
+    /// Head turned from the body: 0 straight, 1 right, 2 left (players).
+    pub head_dir: u8,
 }
 
 /// ZC packets packet_idle_unit (0x09ff), packet_spawn_unit (0x09fe) and
@@ -692,6 +710,8 @@ pub fn parse_unit(opcode: u16, data: &[u8]) -> Option<UnitInfo> {
         // clevel sits 15 bytes before the name (font, maxHP, HP, isBoss and body follow it).
         level: u16_at(name_at - 15),
         font: u16_at(name_at - 13),
+        // headDir follows the two palettes.
+        head_dir: data[palette_at + 4],
     })
 }
 

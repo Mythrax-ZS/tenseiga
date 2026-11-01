@@ -264,6 +264,7 @@ fn load_character(
         shadow,
         action: 0,
         dir: ro_render::Dir::S,
+        head_dir: 0,
         time_ms: 0.0,
         once: false,
         alpha: 1.0, scale: 1.0, tint: [1.0; 3],
@@ -860,6 +861,7 @@ impl Mob {
         let c = self.walker.cell;
         if c != cell {
             self.walker.dir = ro_game::dir_from_step(cell.0 - c.0, cell.1 - c.1);
+            self.actor.head_dir = 0;
         }
     }
 
@@ -938,6 +940,10 @@ impl Mob {
         };
         self.smooth = Some((fx, fy));
         let walking = self.walker.is_walking();
+        // Walking straightens the head.
+        if walking {
+            self.actor.head_dir = 0;
+        }
         let (x, z) = ((fx + 0.5) * ro_render::CELL, (fy + 0.5) * ro_render::CELL);
         let y = world.floor_at(x, z);
         self.actor.pos = glam::Vec3::new(x, y, z);
@@ -1518,7 +1524,7 @@ impl App {
             let loaded = models3d::load(vfs, r, &name).inspect_err(|e| tracing::warn!(job, "3D model {name}: {e:#}")).ok().map(std::rc::Rc::new);
             let actor = loaded.is_some().then(|| {
                 let shadow = self.sprites.get("shadow").cloned().flatten().and_then(|a| a.shadow);
-                ro_render::Actor { pos: Default::default(), body: ro_render::SheetId::NONE, head: None, headgear: vec![], weapon: vec![], shadow, action: 0, dir: ro_render::Dir::S, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] }
+                ro_render::Actor { pos: Default::default(), body: ro_render::SheetId::NONE, head: None, headgear: vec![], weapon: vec![], shadow, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] }
             });
             self.models3d.insert(job, loaded);
             self.sprites.insert(key, actor.clone());
@@ -1550,7 +1556,7 @@ impl App {
                 let head = merc_head.map(|(s, a)| r.add_sheet(&s, a, None));
                 let shadow = self.sprites.get("shadow").cloned().flatten().and_then(|a| a.shadow);
                 let (scale, tint) = saga.map_or((1.0, [1.0; 3]), |l| (l.scale, l.tint));
-                Some(ro_render::Actor { pos: Default::default(), body, head, headgear: vec![], weapon, shadow, action: 0, dir: ro_render::Dir::S, time_ms: 0.0, once: false, alpha: 1.0, scale, tint })
+                Some(ro_render::Actor { pos: Default::default(), body, head, headgear: vec![], weapon, shadow, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale, tint })
             }
             None => {
                 tracing::debug!(job, %name, "no sprite for class");
@@ -1684,6 +1690,7 @@ impl App {
                 ro_net::UnitPos::At { x, y, dir } => {
                     m.walker.stop_at((x as i32, y as i32));
                     m.walker.dir = dir as usize;
+                    m.actor.head_dir = info.head_dir;
                 }
             }
             return;
@@ -1724,6 +1731,7 @@ impl App {
         mob.class = info.job;
         mob.level = info.level;
         mob.actor.alpha = option_alpha(info.option, false);
+        mob.actor.head_dir = info.head_dir;
         mob.human = is_player_class(info.job);
         mob.look = look;
         mob.font = info.font;
@@ -3619,6 +3627,7 @@ impl App {
                         emblem: 0,
                         level: m.level,
                         font: m.font,
+                        head_dir: m.actor.head_dir,
                     };
                     self.unit(info);
                 }
@@ -3721,10 +3730,11 @@ impl App {
                 let msg = if ok { "You tamed it! Look for its egg in your inventory." } else { "The taming failed." };
                 self.hud.push_chat(ro_net::ChatKind::System, msg.into());
             }
-            Turned { id, dir } => {
+            Turned { id, head, dir } => {
                 if let Some(m) = self.mob_mut(id) {
                     if !m.walker.is_walking() {
                         m.walker.dir = (dir % 8) as usize;
+                        m.actor.head_dir = head;
                     }
                 }
             }
@@ -4525,7 +4535,7 @@ impl App {
         let actor = match (spr, act) {
             (Some(spr), Some(act)) => {
                 let body = r.add_sheet(&spr, act, None);
-                Some(ro_render::Actor { pos: Default::default(), body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] })
+                Some(ro_render::Actor { pos: Default::default(), body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] })
             }
             _ => None,
         };
@@ -4865,6 +4875,7 @@ impl App {
                         shadow: None,
                         action: 0,
                         dir: ro_render::Dir::S,
+                        head_dir: 0,
                         time_ms: 0.0,
                         once: true,
                         alpha: 1.0, scale: 1.0, tint: [1.0; 3],
@@ -6130,6 +6141,77 @@ impl App {
         }
     }
 
+    /// A left click on the world: talk, attack, aim, pick up, turn or walk.
+    fn left_click(&mut self) {
+        let unit = self.pick_unit().and_then(|id| self.units.get(&id).map(|m| (id, m.kind)));
+        match unit {
+            // NPCs: talk (walking over first if needed).
+            Some((id, k)) if is_npc(k) => {
+                self.walk_goal = None;
+                self.attack = None;
+                self.talk(id);
+            }
+            // PvP / GvG maps: clicking an enemy player attacks (the original's attack cursor).
+            Some((id, 0)) if self.aiming.is_none() && self.is_enemy_player(id) => self.attack_unit(id),
+            // Other players: a menu (trade, party, friend).
+            Some((id, 0)) if self.aiming.is_none() => self.open_player_menu(id),
+            // Monsters: attack until it dies (or use the skill being aimed).
+            Some((id, 5)) if std::mem::take(&mut self.capturing) => self.send(ro_net::Command::Companion(ro_net::CompanionRequest::Capture(id))),
+            Some((id, 5)) => match self.aiming.take() {
+                Some((skill, level)) => self.use_skill_on(skill, level, id),
+                None => self.attack_unit(id),
+            },
+            // Aiming at another player (heal, blessing...).
+            Some((id, 0)) => {
+                if let Some((skill, level)) = self.aiming.take() {
+                    self.use_skill_on(skill, level, id);
+                }
+            }
+            _ => {
+                self.attack = None;
+                self.chasing = false;
+                if let Some((skill, level)) = self.aiming.take() {
+                    let ground = self.skills.iter().find(|s| s.id == skill).is_some_and(|s| s.target & 2 != 0);
+                    let me = self.player.as_ref().map(|p| p.walker.cell);
+                    match self.pick() {
+                        Some(cell) if ground => self.use_skill_at(skill, level, cell),
+                        // Clicking our own cell targets ourselves.
+                        Some(cell) if Some((cell.0 as i32, cell.1 as i32)) == me => self.use_skill_on(skill, level, self.account_id),
+                        _ => {}
+                    }
+                } else if self.shift || self.player.as_ref().is_some_and(|p| p.sitting) {
+                    if let Some(cell) = self.pick() {
+                        self.turn_to((cell.0 as i32, cell.1 as i32));
+                    }
+                } else if let Some(item) = self.pick_floor_item() {
+                    self.pick_up(item);
+                } else if let Some(cell) = self.pick() {
+                    self.pending_npc = None;
+                    self.pending_pickup = None;
+                    self.pending_skill = None;
+                    // Holding the button keeps steering toward the cursor.
+                    self.mouse_walk = true;
+                    self.mouse_walk_ms = 150.0;
+                    self.request_walk(cell);
+                }
+            }
+        }
+    }
+    /// Turns in place to look at a cell (CZ_CHANGE_DIRECTION): Shift+click, a click while
+    /// sitting, talking to an NPC. The server tells only the others, so we turn ourselves.
+    fn turn_to(&mut self, cell: (i32, i32)) {
+        let Some(p) = self.player.as_mut().filter(|p| !p.walker.is_walking()) else { return };
+        let (dx, dy) = (cell.0 - p.walker.cell.0, cell.1 - p.walker.cell.1);
+        if (dx, dy) == (0, 0) {
+            return;
+        }
+        let (head, dir) = ro_game::turn_toward(p.walker.dir, p.actor.head_dir, ro_game::dir_from_step(dx, dy));
+        if (head, dir) != (p.actor.head_dir, p.walker.dir) {
+            (p.actor.head_dir, p.walker.dir) = (head, dir);
+            self.send(ro_net::Command::Turn { head, dir: dir as u8 });
+        }
+    }
+
     /// Attacks a monster until it dies or we pick something else.
     fn attack_unit(&mut self, id: u32) {
         self.walk_goal = None;
@@ -6211,6 +6293,7 @@ impl App {
             if let Some((tx, _)) = self.net.as_ref() {
                 let _ = tx.send(ro_net::Command::Npc { npc, reply: ro_net::NpcReply::Contact });
             }
+            self.turn_to(b);
             return;
         }
         // Walk to the nearest walkable cell beside the NPC, then talk.
@@ -6740,6 +6823,20 @@ impl App {
                         self.fake_click = (f.len() == 2).then(|| (egui::pos2(f[0], f[1]), true));
                         None
                     }
+                    // wclick:x:y[:shift] left-clicks the world there (window pixels); cursor:x:y
+                    // only moves the mouse there.
+                    Some((step @ ("wclick" | "cursor"), at)) => {
+                        let f: Vec<&str> = at.split(':').collect();
+                        if let [Ok(x), Ok(y)] = [f[0].parse::<f64>(), f.get(1).unwrap_or(&"").parse::<f64>()] {
+                            self.cursor = Some((x, y));
+                            if step == "wclick" {
+                                let held = std::mem::replace(&mut self.shift, f.get(2) == Some(&"shift"));
+                                self.left_click();
+                                self.shift = held;
+                            }
+                        }
+                        None
+                    }
                     // rclick:x:y right-clicks the world there (window pixels).
                     Some(("rclick", at)) => {
                         let f: Vec<f64> = at.split(':').filter_map(|v| v.parse().ok()).collect();
@@ -7192,6 +7289,11 @@ impl App {
         // The unit and the floor item under the cursor (a monster's or an item's name shows only then).
         let hovered = self.pick_unit();
         let hovered_item = self.pick_floor_item();
+        // The walkable cell under the mouse, marked on the ground as the original does.
+        let hover_cell = (self.front.is_none() && !self.rotating && !self.egui_ctx.is_pointer_over_egui())
+            .then(|| self.pick())
+            .flatten()
+            .filter(|&(x, y)| self.world.as_ref().and_then(|w| w.gat.as_ref()).is_some_and(|g| g.walkable(x as i32, y as i32)));
         let (Some(r), Some(window)) = (self.renderer.as_mut(), self.window.as_ref()) else { return };
         r.actors.clear();
         r.models.clear();
@@ -7259,6 +7361,17 @@ impl App {
                 }
                 r.actors.push(a);
             }
+            // The ground cursor: texture\grid.tga's corner marks, mint green and half opaque
+            // (measured from the original), lying on the cell's corners.
+            if let (Some((x, y)), Some(vfs)) = (hover_cell, self.vfs.as_ref()) {
+                if let Some(tex) = self.fx.texture(r, vfs, "data\\texture\\grid.tga") {
+                    let (x0, z0) = (x as f32, y as f32);
+                    let h = |dx: f32, dz: f32| w.floor_at((x0 + dx) * ro_render::CELL, (z0 + dz) * ro_render::CELL);
+                    let shape = ro_render::Shape::Cell { heights: [h(0.001, 0.001), h(0.999, 0.001), h(0.999, 0.999), h(0.001, 0.999)] };
+                    let pos = glam::Vec3::new(x0 * ro_render::CELL, 0.0, z0 * ro_render::CELL);
+                    r.auras.push(ro_render::ProcFx { tex, shape, pos, color: [0.106, 0.863, 0.686], time_ms: 0.0, duration_ms: f32::MAX });
+                }
+            }
             // Ambient map effects (RSW emitters, EF_* ids): torches loop in place; bubbles and
             // fireflies fire again on each emitter's own timer while the player is near.
             if let (Some(vfs), Some(p)) = (self.vfs.as_ref(), self.player.as_ref()) {
@@ -7269,7 +7382,7 @@ impl App {
                         Some(fx::MapVisual::Sprite(name, lift)) => {
                             e.clock_ms += dt;
                             if let (true, Some(body)) = (w.shows_cell((e.pos.x / ro_render::CELL) as i32, (e.pos.z / ro_render::CELL) as i32), self.fx.sprite(r, vfs, name)) {
-                                r.actors.push(ro_render::Actor { pos: e.pos + glam::Vec3::Y * lift, body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, time_ms: e.clock_ms, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] });
+                                r.actors.push(ro_render::Actor { pos: e.pos + glam::Vec3::Y * lift, body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: e.clock_ms, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] });
                             }
                         }
                         Some(visual) => {
@@ -7360,6 +7473,7 @@ impl App {
                             shadow: None,
                             action: action / 8,
                             dir: ro_render::Dir::from_index(action),
+                            head_dir: 0,
                             time_ms: *t,
                             once: true,
                             alpha: 1.0, scale: 1.0, tint: [1.0; 3],
@@ -8467,57 +8581,7 @@ impl ApplicationHandler for App {
                 r.camera.zoom(steps);
             }
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => self.right_button(state == ElementState::Pressed),
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                let unit = self.pick_unit().and_then(|id| self.units.get(&id).map(|m| (id, m.kind)));
-                match unit {
-                    // NPCs: talk (walking over first if needed).
-                    Some((id, k)) if is_npc(k) => {
-                        self.walk_goal = None;
-                        self.attack = None;
-                        self.talk(id);
-                    }
-                    // PvP / GvG maps: clicking an enemy player attacks (the original's attack cursor).
-                    Some((id, 0)) if self.aiming.is_none() && self.is_enemy_player(id) => self.attack_unit(id),
-                    // Other players: a menu (trade, party, friend).
-                    Some((id, 0)) if self.aiming.is_none() => self.open_player_menu(id),
-                    // Monsters: attack until it dies (or use the skill being aimed).
-                    Some((id, 5)) if std::mem::take(&mut self.capturing) => self.send(ro_net::Command::Companion(ro_net::CompanionRequest::Capture(id))),
-                    Some((id, 5)) => match self.aiming.take() {
-                        Some((skill, level)) => self.use_skill_on(skill, level, id),
-                        None => self.attack_unit(id),
-                    },
-                    // Aiming at another player (heal, blessing...).
-                    Some((id, 0)) => {
-                        if let Some((skill, level)) = self.aiming.take() {
-                            self.use_skill_on(skill, level, id);
-                        }
-                    }
-                    _ => {
-                        self.attack = None;
-                        self.chasing = false;
-                        if let Some((skill, level)) = self.aiming.take() {
-                            let ground = self.skills.iter().find(|s| s.id == skill).is_some_and(|s| s.target & 2 != 0);
-                            let me = self.player.as_ref().map(|p| p.walker.cell);
-                            match self.pick() {
-                                Some(cell) if ground => self.use_skill_at(skill, level, cell),
-                                // Clicking our own cell targets ourselves.
-                                Some(cell) if Some((cell.0 as i32, cell.1 as i32)) == me => self.use_skill_on(skill, level, self.account_id),
-                                _ => {}
-                            }
-                        } else if let Some(item) = self.pick_floor_item() {
-                            self.pick_up(item);
-                        } else if let Some(cell) = self.pick() {
-                            self.pending_npc = None;
-                            self.pending_pickup = None;
-                            self.pending_skill = None;
-                            // Holding the button keeps steering toward the cursor.
-                            self.mouse_walk = true;
-                            self.mouse_walk_ms = 150.0;
-                            self.request_walk(cell);
-                        }
-                    }
-                }
-            }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => self.left_click(),
             WindowEvent::CursorMoved { position, .. } => {
                 if let (true, Some((lx, ly))) = (self.rotating, self.cursor) {
                     self.right_drag += (position.x - lx).hypot(position.y - ly);

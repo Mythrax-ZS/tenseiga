@@ -651,10 +651,10 @@ impl FxLib {
         self.strs.iter().filter_map(|p| Some((score(p)?, p.as_str()))).min().map(|(_, p)| p)
     }
 
-    /// A texture from data\texture\effect\ for code-drawn effects.
+    /// A texture from data\texture\effect\ (or by full path from data\) for code-drawn effects.
     pub fn texture(&mut self, r: &mut ro_render::Renderer, vfs: &ro_vfs::Vfs, name: &'static str) -> Option<ro_render::TexId> {
         *self.textures.entry(name).or_insert_with(|| {
-            let path = format!("data\\texture\\effect\\{name}");
+            let path = if name.starts_with("data\\") { name.to_string() } else { format!("data\\texture\\effect\\{name}") };
             let img = vfs.read(&path).ok().flatten().and_then(|d| ro_formats::image::decode(&d, &path).ok());
             if img.is_none() {
                 tracing::warn!(%path, "effect texture missing");
