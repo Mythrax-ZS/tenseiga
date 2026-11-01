@@ -76,6 +76,8 @@ pub struct Settings {
     pub hud_layout: crate::hudlayout::Layout,
     /// Shortcut Settings: keys moved from their defaults (action id -> key, "" for none).
     pub keys: crate::keybinds::Keys,
+    /// Effects such as Meteor Storm and Earth Spike shake the screen, as in the original.
+    pub screen_shake: bool,
     /// Arrange was pressed: the game opens the layout editor (not saved).
     #[serde(skip)]
     pub arrange: bool,
@@ -86,7 +88,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, hud_layout: Default::default(), keys: Default::default(), arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
+        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, hud_layout: Default::default(), keys: Default::default(), screen_shake: true, arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
     }
 }
 
@@ -297,6 +299,9 @@ impl Settings {
         ui.end_row();
         ui.label("Minimap");
         ui.checkbox(&mut self.minimap, "Show (Ctrl+Tab)");
+        ui.end_row();
+        ui.label("Effects");
+        ui.checkbox(&mut self.screen_shake, "Screen shake").on_hover_text("Meteor Storm, Earth Spike, Heaven's Drive and other heavy effects shake the screen, as in the original");
         ui.end_row();
         ui.label("Chat");
         ui.checkbox(&mut self.exp_messages, "Experience messages").on_hover_text("Experience gained from monsters; quest rewards always show");

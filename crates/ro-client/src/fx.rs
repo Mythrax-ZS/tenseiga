@@ -787,6 +787,45 @@ impl FxLib {
     }
 }
 
+/// A screen quake: (delay, duration) in ms from when the effect starts.
+pub type Quake = (u32, u32);
+
+/// The `EF_*` effects that shake the screen, with roBrowser's timings for the original's
+/// (its EffectTable calls Camera.setQuake; 650 ms when it gives no duration).
+pub fn ef_quake(effect: u32) -> Option<Quake> {
+    Some(match effect {
+        79 | 142 | 183 | 563 | 732 => (0, 200), // EARTHSPIKE, HEAVENDRIVE, SUI_EXPLOSION, SCREEN_QUAKE, EARTHWALL
+        220 => (200, 200),                       // POTION_BERSERK
+        92 => (600, 650),                        // METEORSTORM
+        102 => (350, 650),                       // CRASHEARTH
+        303 | 512 => (132, 650),                 // CHEMICAL2, CHEMICAL2DASH
+        365 => (500, 650),                       // PRESSURE
+        380 | 387 => (300, 650),                 // MAGICCRASHER, FALCONASSAULT
+        537 => (200, 650),                       // ACIDDEMON
+        666 | 668 => (0, 650),                   // NPC_EARTHQUAKE, DRAGONFEAR
+        _ => return None,
+    })
+}
+
+/// The skills whose effect is one of those (by rAthena skill id).
+pub fn skill_quake(skill: u16) -> Option<Quake> {
+    ef_quake(match skill {
+        90 => 79,   // WZ_EARTHSPIKE
+        91 => 142,  // WZ_HEAVENDRIVE
+        173 => 183, // NPC_SELFDESTRUCTION
+        83 => 92,   // WZ_METEOR
+        230 => 303, // AM_ACIDTERROR
+        367 => 365, // PA_PRESSURE
+        365 => 380, // HW_MAGICCRASHER
+        381 => 387, // SN_FALCONASSAULT
+        490 => 537, // CR_ACIDDEMONSTRATION
+        653 => 666, // NPC_EARTHQUAKE
+        659 => 668, // NPC_DRAGONFEAR
+        484 => 563, // HW_GRAVITATION (its field: 200 ms)
+        _ => return None,
+    })
+}
+
 /// rAthena `EF_*` effects the original draws in code, shown with the matching skill's effect.
 pub fn ef_skill(effect: u32) -> Option<u16> {
     Some(match effect {
