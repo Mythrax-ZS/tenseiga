@@ -1066,6 +1066,11 @@ struct App {
     attack: Option<(u32, i16)>,
     /// How many lines of the Super Novice prayer have been said in a row.
     prayer_at: usize,
+    /// /doridori: milliseconds into our head shake.
+    doridori: Option<f32>,
+    /// Holding the button after a turn in place: the direction last looked toward, so moving
+    /// the mouse round keeps turning.
+    turn_drag: Option<usize>,
     /// Screen quakes running or due: (start, end).
     quakes: Vec<(std::time::Instant, std::time::Instant)>,
     /// Varies the hit sparks' flecks.
@@ -1329,10 +1334,10 @@ struct App {
     hat_fx: std::collections::HashMap<(u32, u16), u32>,
     /// Units wearing a custom code-drawn aura (custom hat effect ids, see `custom_hat_aura`).
     hat_auras: std::collections::HashMap<u32, ro_render::AuraStyle>,
-    /// Guild emblems by guild id (None while being fetched).
+    /// Guild emblems by guild id (None while being fetched, or when the fetch failed).
     emblems: std::collections::HashMap<u32, Option<egui::TextureHandle>>,
-    /// The emblem version last asked for, by guild id.
-    emblem_versions: std::collections::HashMap<u32, u32>,
+    /// The emblem version last asked for, and when, by guild id.
+    emblem_versions: std::collections::HashMap<u32, (u32, std::time::Instant)>,
     /// Emblem uploads and downloads on the web server.
     emblem_web: emblem::Web,
     /// Test hook (--npc-answers): replies to NPC dialog steps, in order.
@@ -4298,10 +4303,14 @@ impl App {
     /// Fetches a guild's emblem unless this version was already asked for: from the web
     /// server, or the map server when there is no web login.
     fn want_emblem(&mut self, guild: u32, version: u32) {
-        if guild == 0 || (self.emblem_versions.get(&guild) == Some(&version) && self.emblems.contains_key(&guild)) {
+        // Asked already: wait for it. A fetch that came to nothing (the web server was down)
+        // is tried again once half a minute has passed.
+        let asked = self.emblem_versions.get(&guild).filter(|(v, _)| *v == version);
+        let have = self.emblems.get(&guild).is_some_and(Option::is_some);
+        if guild == 0 || asked.is_some_and(|(_, at)| have || at.elapsed() < std::time::Duration::from_secs(30)) {
             return;
         }
-        self.emblem_versions.insert(guild, version);
+        self.emblem_versions.insert(guild, (version, std::time::Instant::now()));
         self.emblems.entry(guild).or_insert(None);
         if !self.emblem_web.download(guild, version) {
             self.send(ro_net::Command::Guild(ro_net::GuildRequest::Emblem(guild)));
@@ -5340,7 +5349,10 @@ impl App {
             "/emo" | "/emotion" => self.emote_win.open = !self.emote_win.open,
             // CZ_DORIDORI: the head shake's SP regen bonus (Super Novice, or a resting Taekwon
             // line); the head itself doesn't turn here.
-            "/doridori" => self.send(ro_net::Command::Bare("NoviceDoriDori")),
+            "/doridori" => {
+                self.doridori = Some(0.0);
+                self.send(ro_net::Command::Bare("NoviceDoriDori"));
+            }
             // Out of a costume status (wedding, Xmas, summer, dress-up, hanbok, Oktoberfest).
             "/changedress" | "/nocosplay" => self.send(ro_net::Command::Bare("changedress")),
             // CZ_RESET_SKILL runs rAthena's @resetskill, so it needs that GM permission.
@@ -6181,7 +6193,8 @@ impl App {
                     }
                 } else if self.shift || self.player.as_ref().is_some_and(|p| p.sitting) {
                     if let Some(cell) = self.pick() {
-                        self.turn_to((cell.0 as i32, cell.1 as i32));
+                        // Holding the button keeps turning as the mouse goes round.
+                        self.turn_drag = self.turn_to((cell.0 as i32, cell.1 as i32));
                     }
                 } else if let Some(item) = self.pick_floor_item() {
                     self.pick_up(item);
@@ -6199,16 +6212,30 @@ impl App {
     }
     /// Turns in place to look at a cell (CZ_CHANGE_DIRECTION): Shift+click, a click while
     /// sitting, talking to an NPC. The server tells only the others, so we turn ourselves.
-    fn turn_to(&mut self, cell: (i32, i32)) {
-        let Some(p) = self.player.as_mut().filter(|p| !p.walker.is_walking()) else { return };
+    /// Returns the direction looked toward.
+    fn turn_to(&mut self, cell: (i32, i32)) -> Option<usize> {
+        let p = self.player.as_mut().filter(|p| !p.walker.is_walking())?;
         let (dx, dy) = (cell.0 - p.walker.cell.0, cell.1 - p.walker.cell.1);
         if (dx, dy) == (0, 0) {
-            return;
+            return None;
         }
-        let (head, dir) = ro_game::turn_toward(p.walker.dir, p.actor.head_dir, ro_game::dir_from_step(dx, dy));
+        let want = ro_game::dir_from_step(dx, dy);
+        let (head, dir) = ro_game::turn_toward(p.walker.dir, p.actor.head_dir, want);
         if (head, dir) != (p.actor.head_dir, p.walker.dir) {
             (p.actor.head_dir, p.walker.dir) = (head, dir);
             self.send(ro_net::Command::Turn { head, dir: dir as u8 });
+        }
+        Some(want)
+    }
+
+    /// The mouse moved with the button held after a turn in place: look the new way, if the
+    /// cursor is now in another direction.
+    fn drag_turn(&mut self) {
+        let (Some(cell), Some(p)) = (self.pick(), self.player.as_ref()) else { return };
+        let cell = (cell.0 as i32, cell.1 as i32);
+        let (dx, dy) = (cell.0 - p.walker.cell.0, cell.1 - p.walker.cell.1);
+        if (dx, dy) != (0, 0) && Some(ro_game::dir_from_step(dx, dy)) != self.turn_drag {
+            self.turn_drag = self.turn_to(cell);
         }
     }
 
@@ -7334,6 +7361,16 @@ impl App {
                 let idle = if self.attack.is_some() && self.action == 0 { 4 } else { self.action };
                 p.attack_group = attack_group(r, &p.actor);
                 p.fit_pose(r);
+                // /doridori: the head shakes left and right, then looks ahead again.
+                if let Some(t) = self.doridori.as_mut() {
+                    const SHAKE: [u8; 5] = [2, 1, 2, 1, 0];
+                    *t += dt;
+                    let i = (*t / 120.0) as usize;
+                    p.actor.head_dir = SHAKE[i.min(SHAKE.len() - 1)];
+                    if i >= SHAKE.len() {
+                        self.doridori = None;
+                    }
+                }
                 let a = p.update(dt, w, octant, idle);
                 tracing::trace!(x = a.pos.x / ro_render::CELL, z = a.pos.z / ro_render::CELL, dt, cell = ?p.walker.cell, next = ?p.walker.next(), "walk trace");
                 r.camera.target = a.pos + quake_offset(&mut self.quakes, std::time::Instant::now(), r.camera.yaw);
@@ -8525,6 +8562,9 @@ impl ApplicationHandler for App {
         // Track the left button ourselves (hold-to-walk), whatever the UI did with the event.
         if let WindowEvent::MouseInput { state, button: MouseButton::Left, .. } = &event {
             self.left_down = *state == ElementState::Pressed;
+            if !self.left_down {
+                self.turn_drag = None;
+            }
         }
         if let WindowEvent::CursorMoved { position, .. } = &event {
             // Keep tracking the cursor even over UI so rotation deltas stay continuous.
@@ -8590,6 +8630,9 @@ impl ApplicationHandler for App {
                     r.camera.rotate((position.x - lx) as f32 * s, (position.y - ly) as f32 * s);
                 }
                 self.cursor = Some((position.x, position.y));
+                if self.left_down && self.turn_drag.is_some() {
+                    self.drag_turn();
+                }
             }
             _ => {}
         }
@@ -8809,6 +8852,8 @@ fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         ctrl: false,
         shift: false,
         prayer_at: 0,
+        doridori: None,
+        turn_drag: None,
         quakes: vec![],
         spark_seed: 1,
         screenshot: false,
