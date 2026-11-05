@@ -89,11 +89,13 @@ pub fn parse_pickup(data: &[u8]) -> Option<ItemData> {
     let location = b.get_u32_le();
     let kind = b.get_u8();
     let result = b.get_u8();
-    b.advance(4 + 2 + 25 + 1); // hire date, bind, options, favorite
+    b.advance(4 + 2 + 25); // hire date, bind, options
+    // Set when the item went into the favourites tab (taken from storage with Shift+right-click).
+    let favorite = b.get_u8() != 0;
     let look = b.get_u16_le();
     let refine = b.get_u8();
     let grade = b.get_u8();
-    (result == 0).then_some(ItemData { index, id, kind, amount, location, equipped: 0, refine, grade, identified, cards, look, favorite: false })
+    (result == 0).then_some(ItemData { index, id, kind, amount, location, equipped: 0, refine, grade, identified, cards, look, favorite })
 }
 
 /// An item lying on the ground.
@@ -426,6 +428,26 @@ impl Encode for StatRequest {
 mod tests {
     use super::*;
     use crate::client_packet;
+
+    #[test]
+    fn pickup_keeps_the_favourites_tab() {
+        // ZC_ITEM_PICKUP_ACK, 70 bytes: a Jellopy taken from storage into the favourites tab.
+        let mut p = vec![0; 70];
+        p[..2].copy_from_slice(&0x0b41u16.to_le_bytes());
+        p[2..4].copy_from_slice(&7u16.to_le_bytes()); // index
+        p[4..6].copy_from_slice(&3u16.to_le_bytes()); // amount
+        p[6..10].copy_from_slice(&909u32.to_le_bytes());
+        p[10] = 1; // identified
+        p[65] = 1; // favorite, after hire date, bind and the five options
+        p[68] = 4; // refine
+        let it = parse_pickup(&p).expect("a successful add");
+        assert_eq!((it.index, it.amount, it.id, it.refine), (7, 3, 909, 4));
+        assert!(it.favorite);
+        p[65] = 0;
+        assert!(!parse_pickup(&p).unwrap().favorite);
+        p[33] = 4; // result: inventory full
+        assert!(parse_pickup(&p).is_none());
+    }
 
     #[test]
     fn normal_item_layout() {
