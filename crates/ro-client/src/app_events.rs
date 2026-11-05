@@ -1596,6 +1596,7 @@ impl App {
                 self.skill_fx(skill, self.unit_pos(target), false);
             }
             SkillHit { skill, act } => {
+                tracing::debug!(skill, src = act.src, target = act.target, damage = act.damage, hits = act.hits, "skill hit");
                 self.feel_act(&act);
                 // Our skill landed: a pulse per hit.
                 if act.src == self.account_id {

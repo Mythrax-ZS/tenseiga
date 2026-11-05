@@ -2074,12 +2074,17 @@ impl App {
 
     /// Uses a skill at `level`: self skills go off at once, targeted ones wait for a click.
     fn start_skill(&mut self, id: u16, level: u16) {
-        let Some(s) = self.skills.iter().find(|s| s.id == id) else { return };
+        let Some(s) = self.skills.iter().find(|s| s.id == id) else {
+            tracing::debug!(skill = id, "skill key: not a skill we have");
+            return;
+        };
         let level = level.clamp(1, s.level.max(1));
         if s.target & 4 != 0 {
             self.use_skill_on(id, level, self.account_id);
         } else if s.target & (1 | 2 | 16 | 32) != 0 {
             self.aiming = Some((id, level));
+        } else {
+            tracing::debug!(skill = id, flags = s.target, "skill key: nothing to use (passive)");
         }
     }
 
@@ -2110,6 +2115,7 @@ impl App {
         }
         self.pending_skill = None;
         self.walk_goal = None;
+        tracing::debug!(skill, level, target, "use skill");
         self.send(ro_net::Command::Stat(ro_net::StatRequest::UseSkill { skill, level, target }));
     }
 
