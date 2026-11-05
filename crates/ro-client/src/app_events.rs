@@ -84,6 +84,10 @@ impl App {
                 _ => {}
             }
         }
+        // A run of the server's weather effects lasts until it sends anything else.
+        if !matches!(event, ScriptEffect { effect, .. } if weather::from_effect(effect).is_some()) && !matches!(event, Chat { from: None, .. }) {
+            self.weather.server_other();
+        }
         match event {
             Entered { map, x, y, dir, character, account_id, font } => {
                 tracing::info!(%map, x, y, name = %character.name, job = character.job, "entered");
@@ -196,7 +200,7 @@ impl App {
                 }
                 // The server's word that weather stopped (@snow again, @clearweather).
                 if from.is_none() {
-                    self.weather.server_said(&text, std::time::Instant::now());
+                    self.weather.server_said(&text);
                 }
                 self.hud.push_chat_coloured(kind, text, color);
             }
@@ -2272,7 +2276,7 @@ impl App {
             // The map's weather (sent on entering it, and all again whenever it changes).
             ScriptEffect { effect, .. } if weather::from_effect(effect).is_some() => {
                 if let Some(kind) = weather::from_effect(effect) {
-                    self.weather.server_on(kind, std::time::Instant::now());
+                    self.weather.server_on(kind);
                 }
             }
             ScriptEffect { id, effect } => {
