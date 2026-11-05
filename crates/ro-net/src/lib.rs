@@ -1202,10 +1202,7 @@ impl MapSession {
                         0x0989 => Some(Event::ClanLeft),
                         0x096d => Some(Event::MergeOpen(data.get(4..).unwrap_or_default().chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect())),
                         0x096f if data.len() >= 7 => Some(Event::Merged { index: u16::from_le_bytes([data[2], data[3]]), amount: u16::from_le_bytes([data[4], data[5]]), reason: data[6] }),
-                        0x0b7c => Some(Event::GuildBans(data.get(4..).unwrap_or_default().chunks_exact(68).map(|c| {
-                            let s = |b: &[u8]| String::from_utf8_lossy(&b[..b.iter().position(|&x| x == 0).unwrap_or(b.len())]).into_owned();
-                            (s(&c[44..68]), s(&c[4..44]))
-                        }).collect())),
+                        0x0b7c => Some(Event::GuildBans(data.get(4..).unwrap_or_default().chunks_exact(68).map(|c| (decode_cstr(&c[44..68]), decode_cstr(&c[4..44]))).collect())),
                         0x015e if data.len() >= 6 => Some(Event::GuildBroken(u32::from_le_bytes([data[2], data[3], data[4], data[5]]))),
                         0x01b4 if data.len() >= 12 => Some(Event::UnitGuild { id: u32::from_le_bytes([data[2], data[3], data[4], data[5]]), guild: u32::from_le_bytes([data[6], data[7], data[8], data[9]]), emblem: u16::from_le_bytes([data[10], data[11]]) as u32 }),
                         0x014c => Some(Event::GuildRelations(ro_proto::guild::parse_relations(&data))),
@@ -1285,11 +1282,7 @@ impl MapSession {
                         0x0b78 => Some(Event::Barter { items: ro_proto::market::parse_barter(&data), expanded: false }),
                         0x0b79 => Some(Event::Barter { items: ro_proto::market::parse_barter_expanded(&data), expanded: true }),
                         0x01d3 if data.len() >= 35 => Some(Event::Sound { name: ro_proto::packets::get_fixed_str(&mut &data[2..26], 24), act: data[26] }),
-                        0x0b8c if data.len() >= 5 => {
-                            let raw = &data[5..];
-                            let end = raw.iter().position(|c| *c == 0).unwrap_or(raw.len());
-                            Some(Event::Bgm(String::from_utf8_lossy(&raw[..end]).into_owned()))
-                        }
+                        0x0b8c if data.len() >= 5 => Some(Event::Bgm(decode_cstr(&data[5..]))),
                         0x0144 if data.len() >= 23 => {
                             let l = |i: usize| u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
                             Some(Event::Viewpoint { npc: l(2), kind: l(6), x: l(10), y: l(14), id: data[18], color: l(19) })
@@ -1302,9 +1295,7 @@ impl MapSession {
                         }
                         0x0293 if data.len() >= 70 => {
                             let l = |i: usize| u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-                            let raw = &data[19..70];
-                            let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-                            Some(Event::BossInfo { kind: data[2], x: l(3), y: l(7), hours: u16::from_le_bytes([data[11], data[12]]), minutes: u16::from_le_bytes([data[13], data[14]]), name: String::from_utf8_lossy(&raw[..end]).into_owned() })
+                            Some(Event::BossInfo { kind: data[2], x: l(3), y: l(7), hours: u16::from_le_bytes([data[11], data[12]]), minutes: u16::from_le_bytes([data[13], data[14]]), name: decode_cstr(&data[19..70]) })
                         }
                         0x01b0 if data.len() >= 11 => Some(Event::NpcSprite { id: u32::from_le_bytes([data[2], data[3], data[4], data[5]]), class: u32::from_le_bytes([data[7], data[8], data[9], data[10]]) }),
                         0x07e2 if data.len() >= 8 => Some(Event::MsgValue { msg: u16::from_le_bytes([data[2], data[3]]), value: i32::from_le_bytes([data[4], data[5], data[6], data[7]]) }),
@@ -1316,9 +1307,7 @@ impl MapSession {
                         0x0b2d => ro_proto::bg::parse_castle_info(&data).map(|(id, economy, defense)| Event::CastleInfo { id, economy, defense }),
                         0x0b2e if data.len() >= 4 => Some(Event::CastleTeleport(u16::from_le_bytes([data[2], data[3]]))),
                         0x08e2 if data.len() >= 27 => {
-                            let raw = &data[5..21];
-                            let end = raw.iter().position(|c| *c == 0).unwrap_or(raw.len());
-                            let map = String::from_utf8_lossy(&raw[..end]).trim_end_matches(".gat").to_string();
+                            let map = decode_cstr(&data[5..21]).trim_end_matches(".gat").to_string();
                             Some(Event::Navigate { map, x: u16::from_le_bytes([data[21], data[22]]), y: u16::from_le_bytes([data[23], data[24]]) })
                         }
                         // ZC_UPDATE_GDID: 0x02f7 at this PACKETVER (0x016c is the older form).
@@ -1537,16 +1526,8 @@ impl MapSession {
                         0x01a3 | 0x022f if data.len() >= 5 => Some(Event::Fed { homun: opcode == 0x022f, ok: data[2] != 0, item: u16::from_le_bytes([data[3], data[4]]) }),
                         // The wire flag is inverted: 0 means "in the favourites tab".
                         0x0908 if data.len() >= 5 => Some(Event::ItemFavorite { index: u16::from_le_bytes([data[2], data[3]]), favorite: data[4] == 0 }),
-                        0x0afd if data.len() >= 8 => {
-                            let raw = data.get(8..).unwrap_or_default();
-                            let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-                            Some(Event::GuildTitle { id: u32::from_le_bytes([data[4], data[5], data[6], data[7]]), position: String::from_utf8_lossy(&raw[..end]).into_owned() })
-                        }
-                        0x01e6 if data.len() >= 26 => {
-                            let raw = &data[2..26];
-                            let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-                            Some(Event::CoupleName(String::from_utf8_lossy(&raw[..end]).into_owned()))
-                        }
+                        0x0afd if data.len() >= 8 => Some(Event::GuildTitle { id: u32::from_le_bytes([data[4], data[5], data[6], data[7]]), position: decode_cstr(&data[8..]) }),
+                        0x01e6 if data.len() >= 26 => Some(Event::CoupleName(decode_cstr(&data[2..26]))),
                         0x01d1 if data.len() >= 14 => {
                             let l = |i: usize| u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
                             Some(Event::BladeStop { src: l(2), target: l(6), active: l(10) != 0 })
@@ -1564,9 +1545,7 @@ impl MapSession {
                         }
                         0x0192 if data.len() >= 10 => {
                             let w = |i: usize| u16::from_le_bytes([data[i], data[i + 1]]);
-                            let raw = data.get(8..).unwrap_or_default();
-                            let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-                            Some(Event::CellType { x: w(2), y: w(4), kind: w(6), map: String::from_utf8_lossy(&raw[..end]).into_owned() })
+                            Some(Event::CellType { x: w(2), y: w(4), kind: w(6), map: decode_cstr(&data[8..]) })
                         }
                         0x0abd if data.len() >= 10 => Some(Event::PartyMemberInfo { account_id: u32::from_le_bytes([data[2], data[3], data[4], data[5]]), job: i16::from_le_bytes([data[6], data[7]]), level: i16::from_le_bytes([data[8], data[9]]) }),
                         // ZC_TARGET_SPIRITS: Enchanting Shadow spheres on a target.
@@ -2441,5 +2420,45 @@ mod tests {
         }
         drop(tx);
         server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn names_from_the_server_are_cp949() {
+        // 하야테 and 길드장 (guild master) in CP949.
+        let (hayate, master): (&[u8], &[u8]) = (&[0xc7, 0xcf, 0xbe, 0xdf, 0xc5, 0xd7], &[0xb1, 0xe6, 0xb5, 0xe5, 0xc0, 0xe5]);
+        let (l, addr) = listen().await;
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            read_n(&mut s, 23).await;
+            s.write_all(&fixed(0x02eb, 13, &[])).await.unwrap();
+            s.write_all(&fixed(0x01e6, 26, &[(2, hayate)])).await.unwrap();
+            let mut title = 2_000_000u32.to_le_bytes().to_vec();
+            title.extend(master);
+            title.push(0);
+            s.write_all(&packet(0x0afd, &title)).await.unwrap();
+            // Held open until the session ends.
+            let _ = s.read(&mut [0; 64]).await;
+        });
+        let zone = ZoneServer { char_id: 150_001, map: "prontera.gat".into(), addr };
+        let map = enter_map(&zone, &auth()).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (events_tx, events) = std::sync::mpsc::channel();
+        let run = tokio::spawn(async move { map.run("Hayate", &mut rx, &events_tx).await });
+        let names = tokio::task::spawn_blocking(move || {
+            let (mut couple, mut title) = (None, None);
+            while couple.is_none() || title.is_none() {
+                match events.recv_timeout(Duration::from_secs(5)).expect("no name events") {
+                    Event::CoupleName(n) => couple = Some(n),
+                    Event::GuildTitle { position, .. } => title = Some(position),
+                    _ => {}
+                }
+            }
+            (couple.unwrap(), title.unwrap())
+        })
+        .await
+        .unwrap();
+        assert_eq!(names, ("하야테".to_string(), "길드장".to_string()));
+        drop(tx);
+        run.await.unwrap().unwrap();
     }
 }
