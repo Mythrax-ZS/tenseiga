@@ -1189,7 +1189,8 @@ impl App {
                 }
                 let emblem = (m.guild != 0).then(|| self.emblems.get(&m.guild).cloned().flatten()).flatten().map(|t| t.id());
                 let (orbs, orb_kind) = self.spirits.get(&uid).copied().unwrap_or((0, 0));
-                labels.push(hud::Label { feet, text, color, emblem, orbs, orb_kind });
+                let sprite_px = r.sprite_pixel(m.actor.pos, size).unwrap_or(1.0);
+                labels.push(hud::Label { feet, text, color, emblem, orbs, orb_kind, sprite_px });
             }
         }
         // A floor item's name, as the original: "Jellopy: 3 ea." (msgstringtable 183).
@@ -1201,7 +1202,7 @@ impl App {
                 let name = self.item_db.as_ref().map_or_else(|| format!("Item #{}", f.item), |d| d.name(f.item, f.identified));
                 let amount = f.amount.max(1).to_string();
                 let text = msgstr::get(183, &[&name, &amount]).unwrap_or_else(|| format!("{name}: {amount} ea."));
-                labels.push(hud::Label { feet, text, color: egui::Color32::WHITE, emblem: None, orbs: 0, orb_kind: 0 });
+                labels.push(hud::Label { feet, text, color: egui::Color32::WHITE, emblem: None, orbs: 0, orb_kind: 0, sprite_px: 1.0 });
             }
         }
         let floaters: Vec<_> = self.floaters.iter().filter_map(|(pos, text, color, age)| Some((r.project(*pos, size)?, text.clone(), *color, *age))).collect();
