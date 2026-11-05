@@ -1021,18 +1021,29 @@ impl App {
                         self.doridori = None;
                     }
                 }
-                let a = p.update(dt, w, octant, idle);
+                let mut a = p.update(dt, w, octant, idle);
+                a.silhouette = self.settings.visual.silhouettes.then_some(SILHOUETTE_SELF);
                 tracing::trace!(x = a.pos.x / ro_render::CELL, z = a.pos.z / ro_render::CELL, dt, cell = ?p.walker.cell, next = ?p.walker.next(), "walk trace");
                 r.camera.target = a.pos + quake_offset(&mut self.quakes, std::time::Instant::now(), r.camera.yaw);
                 let level = self.hud.status.base_level >= AURA_LEVEL as i64;
                 p.aura_ms = auras.push(r, self.hat_auras.get(&self.account_id).copied(), level, &a, p.aura_ms + dt, self.account_id);
                 r.actors.push(a);
             }
+            // Silhouettes through walls: party members and the target.
+            let party: Vec<u32> = if self.settings.visual.silhouettes { self.social.party.as_ref().map_or(vec![], |p| p.members.iter().map(|m| m.account_id).collect()) } else { vec![] };
+            let target = self.settings.visual.silhouettes.then(|| self.attack.map(|(t, _)| t).or(self.pad_target)).flatten();
             for (&id, m) in self.units.iter_mut() {
                 let (action, time) = (m.actor.action, m.actor.time_ms);
                 m.attack_group = attack_group(r, &m.actor);
                 m.fit_pose(r);
-                let a = m.update(dt, w, octant, 0);
+                let mut a = m.update(dt, w, octant, 0);
+                a.silhouette = if Some(id) == target {
+                    Some(SILHOUETTE_TARGET)
+                } else if party.contains(&id) {
+                    Some(SILHOUETTE_PARTY)
+                } else {
+                    None
+                };
                 // Attack, hurt and death frames carry their sounds in the ACT.
                 if let (Some(_), Some(audio), Some(vfs)) = (m.pose, self.audio.as_ref(), self.vfs.as_deref()) {
                     let from = if a.action == action && time > 0.0 && a.time_ms >= time { time } else { -1.0 };
@@ -1126,7 +1137,7 @@ impl App {
                         Some(fx::MapVisual::Sprite(name, lift)) => {
                             e.clock_ms += dt;
                             if let (true, Some(body)) = (w.shows_cell((e.pos.x / ro_render::CELL) as i32, (e.pos.z / ro_render::CELL) as i32), self.fx.sprite(r, vfs, name)) {
-                                r.actors.push(ro_render::Actor { pos: e.pos + glam::Vec3::Y * lift, body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: e.clock_ms, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] });
+                                r.actors.push(ro_render::Actor { pos: e.pos + glam::Vec3::Y * lift, body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: e.clock_ms, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3], silhouette: None });
                             }
                         }
                         Some(visual) => {
@@ -1220,7 +1231,7 @@ impl App {
                             head_dir: 0,
                             time_ms: *t,
                             once: true,
-                            alpha: 1.0, scale: 1.0, tint: [1.0; 3],
+                            alpha: 1.0, scale: 1.0, tint: [1.0; 3], silhouette: None,
                         });
                     }
                     self.emotes.retain(|_, (_, t)| *t < f32::MAX);
@@ -2152,3 +2163,8 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
         }
     }
 }
+
+/// Silhouette colours through walls: ourselves, party members, the target.
+const SILHOUETTE_SELF: [f32; 3] = [0.6, 0.8, 1.0];
+const SILHOUETTE_PARTY: [f32; 3] = [0.5, 1.0, 0.55];
+const SILHOUETTE_TARGET: [f32; 3] = [1.0, 0.4, 0.35];

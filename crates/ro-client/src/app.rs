@@ -277,7 +277,7 @@ fn load_character(
         head_dir: 0,
         time_ms: 0.0,
         once: false,
-        alpha: 1.0, scale: 1.0, tint: [1.0; 3],
+        alpha: 1.0, scale: 1.0, tint: [1.0; 3], silhouette: None,
     })
 }
 
@@ -1698,7 +1698,7 @@ impl App {
             let loaded = models3d::load(vfs, r, &name).inspect_err(|e| tracing::warn!(job, "3D model {name}: {e:#}")).ok().map(std::rc::Rc::new);
             let actor = loaded.is_some().then(|| {
                 let shadow = self.sprites.get("shadow").cloned().flatten().and_then(|a| a.shadow);
-                ro_render::Actor { pos: Default::default(), body: ro_render::SheetId::NONE, head: None, headgear: vec![], weapon: vec![], shadow, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] }
+                ro_render::Actor { pos: Default::default(), body: ro_render::SheetId::NONE, head: None, headgear: vec![], weapon: vec![], shadow, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3], silhouette: None }
             });
             self.models3d.insert(job, loaded);
             self.sprites.insert(key, actor.clone());
@@ -1730,7 +1730,7 @@ impl App {
                 let head = merc_head.map(|(s, a)| r.add_sheet(&s, a, None));
                 let shadow = self.sprites.get("shadow").cloned().flatten().and_then(|a| a.shadow);
                 let (scale, tint) = saga.map_or((1.0, [1.0; 3]), |l| (l.scale, l.tint));
-                Some(ro_render::Actor { pos: Default::default(), body, head, headgear: vec![], weapon, shadow, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale, tint })
+                Some(ro_render::Actor { pos: Default::default(), body, head, headgear: vec![], weapon, shadow, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale, tint, silhouette: None })
             }
             None => {
                 tracing::debug!(job, %name, "no sprite for class");
@@ -2314,7 +2314,7 @@ impl App {
         let actor = match (spr, act) {
             (Some(spr), Some(act)) => {
                 let body = r.add_sheet(&spr, act, None);
-                Some(ro_render::Actor { pos: Default::default(), body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3] })
+                Some(ro_render::Actor { pos: Default::default(), body, head: None, headgear: vec![], weapon: vec![], shadow: None, action: 0, dir: ro_render::Dir::S, head_dir: 0, time_ms: 0.0, once: false, alpha: 1.0, scale: 1.0, tint: [1.0; 3], silhouette: None })
             }
             _ => None,
         };

@@ -42,7 +42,7 @@ impl App {
                         head_dir: 0,
                         time_ms: 0.0,
                         once: true,
-                        alpha: 1.0, scale: 1.0, tint: [1.0; 3],
+                        alpha: 1.0, scale: 1.0, tint: [1.0; 3], silhouette: None,
                     };
                     let ms = r.action_ms(body, 0).max(200.0);
                     self.sprite_fx.push((actor, ms));

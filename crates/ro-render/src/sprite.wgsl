@@ -74,6 +74,11 @@ struct VsOut {
 
 @vertex
 fn vs_main(v: VsIn) -> VsOut {
+    return sprite_vertex(v, DEPTH_PULL);
+}
+
+// A sprite corner, its depth taken from a point `pull` world units toward the camera.
+fn sprite_vertex(v: VsIn, pull: f32) -> VsOut {
     var clip = g.view_proj * vec4(v.anchor, 1.0);
     // Pixel stability: put the anchor on a whole screen pixel so sprites don't shimmer as
     // the camera moves.
@@ -85,7 +90,7 @@ fn vs_main(v: VsIn) -> VsOut {
     clip.y -= v.offset.y * g.params.z;
     // Depth comes from a point pulled toward the camera, so the shadow and feet are not
     // hidden by the ground just in front of where the actor stands.
-    let toward_eye = normalize(g.eye.xyz - v.anchor) * DEPTH_PULL;
+    let toward_eye = normalize(g.eye.xyz - v.anchor) * pull;
     let d = g.view_proj * vec4(v.anchor + toward_eye, 1.0);
     clip.z = d.z / d.w * clip.w;
     let a = g.view_proj * vec4(v.anchor, 1.0);
@@ -247,6 +252,32 @@ fn cloud_hash(i: vec2<f32>) -> f32 {
     h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
     h = (h >> 22u) ^ h;
     return f32(h & 0xffffu) / 65535.0;
+}
+
+// Silhouettes: an actor hidden behind a wall or building shows through it as a soft shape
+// of its colour (the vertex colour). Drawn where the scene is nearer than the sprite: its
+// depth is pulled 3 cells further toward the camera than a sprite's, so only something
+// truly in front reveals it (not the ground at its feet).
+@vertex
+fn vs_silhouette(v: VsIn) -> VsOut {
+    return sprite_vertex(v, DEPTH_PULL + 15.0);
+}
+
+@fragment
+fn fs_silhouette(in: VsOut) -> @location(0) vec4<f32> {
+    if !in_room(in.anchor) {
+        discard;
+    }
+    let a = textureSample(tex, samp, in.uv).a * in.color.a;
+    if a < 0.3 {
+        discard;
+    }
+    // Brighter toward the shape's edge, as if lit from behind.
+    let texel = 1.0 / vec2<f32>(textureDimensions(tex));
+    let edge = 1.0 - min(min(textureSample(tex, samp, in.uv + vec2(texel.x * 2.0, 0.0)).a, textureSample(tex, samp, in.uv - vec2(texel.x * 2.0, 0.0)).a), min(textureSample(tex, samp, in.uv + vec2(0.0, texel.y * 2.0)).a, textureSample(tex, samp, in.uv - vec2(0.0, texel.y * 2.0)).a));
+    let k = 0.38 + 0.5 * edge;
+    let c = srgb_to_linear(in.color.rgb);
+    return vec4(c * k, k);
 }
 
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.
