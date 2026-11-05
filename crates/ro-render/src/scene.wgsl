@@ -38,6 +38,8 @@ struct Globals {
     // Wet ground (wet_surface): x how wet, y how hard it rains now; the sky's colour (linear).
     wet: vec4<f32>,
     wet_sky: vec4<f32>,
+    // Wind for swaying foliage: xy its direction (unit, world xz), z how strong (0 still).
+    wind: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -57,6 +59,8 @@ struct VsIn {
     @location(2) uv: vec2<f32>,
     @location(3) lightmap_uv: vec2<f32>,
     @location(4) color: vec3<f32>,
+    // How far it sways in the wind at most (world units; foliage only).
+    @location(5) sway: f32,
 };
 
 struct VsOut {
@@ -71,12 +75,13 @@ struct VsOut {
 @vertex
 fn vs_main(v: VsIn) -> VsOut {
     var o: VsOut;
-    o.pos = g.view_proj * vec4(v.pos, 1.0);
+    let pos = v.pos + sway(v.pos, v.sway);
+    o.pos = g.view_proj * vec4(pos, 1.0);
     o.normal = v.normal;
     o.uv = v.uv;
     o.lightmap_uv = v.lightmap_uv;
     o.color = v.color;
-    o.world = v.pos;
+    o.world = pos;
     return o;
 }
 
@@ -367,6 +372,27 @@ fn drop_hash(i: vec2<f32>) -> f32 {
     h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
     h = (h >> 22u) ^ h;
     return f32(h & 0xffffu) / 65535.0;
+}
+
+// Foliage in the wind (`reach`: how far this vertex sways at most, world units): leaning
+// downwind and swaying back, in slow gusts that roll across the map (nearby trees move
+// together, far ones out of step), with a quick flutter of the leaves on top.
+fn sway(p: vec3<f32>, reach: f32) -> vec3<f32> {
+    if reach <= 0.0 || g.wind.z <= 0.0 {
+        return vec3(0.0);
+    }
+    let t = g.params.x;
+    let dir = vec3(g.wind.x, 0.0, g.wind.y);
+    // Gusts travel downwind: a wave over the map along the wind's direction.
+    let along = dot(p.xz, g.wind.xy);
+    let phase = along * 0.012 + dot(p.xz, vec2(0.0031, -0.0047));
+    let gust = 0.55 + 0.45 * sin(t * 0.45 - along * 0.004);
+    let bend = (0.45 + sin(t * 1.3 + phase) * 0.4 + sin(t * 2.2 + phase * 1.7) * 0.15) * gust;
+    let flutter = sin(t * 6.5 + dot(p, vec3(0.9, 1.3, 0.7))) * 0.12 + sin(t * 9.1 + dot(p, vec3(-1.1, 0.4, 1.7))) * 0.06;
+    let side = vec3(-g.wind.y, 0.0, g.wind.x);
+    let k = reach * min(g.wind.z, 2.5);
+    // Bending over, the top dips a little.
+    return (dir * bend + side * flutter * 0.6 + vec3(0.0, flutter * 0.3 - bend * bend * 0.15, 0.0)) * k;
 }
 
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.
