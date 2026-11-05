@@ -6,4 +6,6 @@
 
 # In-game screenshots (Print Screen)
 /ScreenShot/
+# Chat logs (Settings > Game > Chat > Save to file)
+/Chat/
 /tenseiga.log

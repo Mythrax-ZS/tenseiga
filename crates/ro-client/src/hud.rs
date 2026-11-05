@@ -92,8 +92,15 @@ pub struct Hud {
     pub dialog_layout: DialogLayout,
     /// Floating notice across the upper screen (special popups): lines, colour, when shown.
     pub banner: Option<(Vec<String>, Color32, std::time::Instant)>,
-    /// Chat lines: kind, text, and the colour a script asked for (else the kind's).
-    chat: VecDeque<(ChatKind, String, Option<Color32>)>,
+    /// Chat lines: kind, text, the colour a script asked for (else the kind's), and when it
+    /// arrived (HH:MM).
+    chat: VecDeque<(ChatKind, String, Option<Color32>, String)>,
+    /// Show each chat line's time (Settings > Game > Chat).
+    pub timestamps: bool,
+    /// The chat log file, while Settings > Game > Chat > Save to file is on.
+    pub log: Option<crate::chatlog::ChatLog>,
+    /// Lines since the last flush_log, for the log (the game names their item links first).
+    unlogged: Vec<(chrono::DateTime<chrono::Local>, ChatKind, String)>,
     /// Names for item links in chat, by item id: (name, slots), filled in by the game from
     /// its item table. Ids the chat met without a name are left in `missing_links`.
     pub link_names: std::collections::HashMap<u32, (String, u8)>,
@@ -213,9 +220,37 @@ impl Hud {
     /// A chat line in the colour a script asked for (npctalk, announce), if any.
     pub fn push_chat_coloured(&mut self, kind: ChatKind, text: String, rgb: Option<[u8; 3]>) {
         tracing::debug!(?kind, %text, "chat");
-        self.chat.push_back((kind, text, rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b))));
+        let at = chrono::Local::now();
+        // Kept for the log until the next frame, which may be the one that opens it (the
+        // server's welcome arrives with the map).
+        self.unlogged.push((at, kind, text.clone()));
+        self.chat.push_back((kind, text, rgb.map(|[r, g, b]| Color32::from_rgb(r, g, b)), crate::chatlog::stamp(at)));
         while self.chat.len() > CHAT_LINES {
             self.chat.pop_front();
+        }
+    }
+
+    /// Writes the lines since the last call to the chat log, item links by name (`item`: an
+    /// item's name and slots from the game's item table).
+    pub fn flush_log(&mut self, item: impl Fn(u32) -> Option<(String, u8)>) {
+        let Some(log) = self.log.as_mut() else {
+            self.unlogged.clear();
+            return;
+        };
+        for (at, kind, text) in std::mem::take(&mut self.unlogged) {
+            let plain: String = crate::itemlink::split(&text)
+                .into_iter()
+                .map(|piece| match piece {
+                    crate::itemlink::Piece::Text(t) => t.to_string(),
+                    crate::itemlink::Piece::Item(link) => {
+                        if let (false, Some(named)) = (self.link_names.contains_key(&link.id), item(link.id)) {
+                            self.link_names.insert(link.id, named);
+                        }
+                        link_label(&self.link_names, &mut self.missing_links, &link)
+                    }
+                })
+                .collect();
+            log.write(at, kind, &plain);
         }
     }
 
@@ -487,15 +522,28 @@ impl Hud {
                     .min_scrolled_height(if classic.is_some() { 150.0 } else { 0.0 })
                     .max_height(if classic.is_some() { 150.0 } else { ui.available_height() - input_h })
                     .show(ui, |ui| {
-                        for (kind, text, custom) in &self.chat {
+                        let stamp_color = Color32::from_gray(150);
+                        for (kind, text, custom, time) in &self.chat {
                             let color = custom.unwrap_or_else(|| chat_color(*kind));
                             if !text.contains("<ITEM") {
-                                ui.label(RichText::new(text).size(12.5).color(color));
+                                if self.timestamps {
+                                    // One label, so the line wraps as it would without the time.
+                                    let font = egui::FontId::proportional(12.5);
+                                    let mut job = egui::text::LayoutJob::default();
+                                    job.append(&format!("[{time}] "), 0.0, egui::TextFormat::simple(font.clone(), stamp_color));
+                                    job.append(text, 0.0, egui::TextFormat::simple(font, color));
+                                    ui.label(job);
+                                } else {
+                                    ui.label(RichText::new(text).size(12.5).color(color));
+                                }
                                 continue;
                             }
                             // Item links: the item's name, which opens its description.
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
+                                if self.timestamps {
+                                    ui.label(RichText::new(format!("[{time}] ")).size(12.5).color(stamp_color));
+                                }
                                 for piece in crate::itemlink::split(text) {
                                     match piece {
                                         crate::itemlink::Piece::Text(t) => {
@@ -1051,4 +1099,26 @@ pub fn esc_menu(ctx: &egui::Context) -> Option<EscChoice> {
             });
         });
     choice
+}
+
+#[cfg(test)]
+mod chat_log_tests {
+    use super::*;
+
+    #[test]
+    fn logged_lines_name_their_item_links() {
+        let dir = std::env::temp_dir().join(format!("tenseiga-hudlog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut hud = Hud::default();
+        hud.push_chat(ChatKind::Public, "before the log".into());
+        hud.flush_log(|_| None);
+        hud.log = Some(crate::chatlog::ChatLog::open(&dir, "Doofy").unwrap());
+        hud.push_chat(ChatKind::Public, "Doofy : <ITEML>000020135'00)00)00)00)00</ITEML> for sale".into());
+        hud.flush_log(|id| (id == 4035).then(|| ("Hydra Card".to_string(), 0)));
+        let path = hud.log.as_ref().unwrap().path().to_path_buf();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with("] Doofy : <Hydra Card> for sale\n"), "{text}");
+        assert!(!text.contains("before the log"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

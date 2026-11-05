@@ -1,6 +1,7 @@
 // Tenseiga: the client (included by main.rs for the desktop exe and lib.rs for Android).
 
 mod audio;
+mod chatlog;
 mod book;
 mod captcha;
 mod memorial;

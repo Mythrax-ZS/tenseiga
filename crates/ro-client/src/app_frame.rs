@@ -751,6 +751,8 @@ impl App {
         if let Some(a) = self.queued_action.take() {
             self.ui_action(a);
         }
+        self.sync_chat_log();
+
         // Server events in order, stopping at one that needs a map loaded: it and the ones after
         // it wait for the map loader (the connection keeps going on the net thread meanwhile).
         self.poll_map_load();
@@ -2035,6 +2037,33 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
             };
             window.set_title(&title);
         }
+    }
+
+    /// Chat time stamps and the chat log follow Settings; the log is the current character's
+    /// and gets the lines since the last frame, item links by name.
+    fn sync_chat_log(&mut self) {
+        self.hud.timestamps = self.settings.chat_timestamps;
+        let name = &self.hud.status.name;
+        let want = self.settings.chat_log && self.front.is_none() && !name.is_empty();
+        if !want {
+            self.hud.log = None;
+        } else if self.hud.log.as_ref().is_none_or(|l| l.character() != name) {
+            let dir = std::env::current_dir().unwrap_or_default().join("Chat");
+            match chatlog::ChatLog::open(&dir, name) {
+                Ok(log) => {
+                    tracing::info!(path = %log.path().display(), "chat log");
+                    self.hud.log = Some(log);
+                }
+                Err(e) => {
+                    // Said once: the setting goes back off rather than retry every frame.
+                    self.settings.chat_log = false;
+                    self.settings.save();
+                    self.hud.push_chat(ro_net::ChatKind::System, format!("The chat can't be saved in {}: {e}", dir.display()));
+                }
+            }
+        }
+        let db = self.item_db.as_ref();
+        self.hud.flush_log(|id| db.and_then(|d| d.get(id)).map(|i| (i.name.clone(), i.slots)));
     }
 
     /// How long a frame should take when the window isn't in front: minimised, the game still
