@@ -26,7 +26,7 @@ pub use scene::{rsm_at, SceneBuilder, SceneMesh, Vertex as ModelVertex};
 pub use upscale::{is_sprite_path, AssetClass, Quality as UpscaleQuality, UpscaleSettings, Upscaler};
 pub use water::{flag as water_flag, Foam, WaterMesh, WaterQuality, WaterSettings};
 pub use weather::{WeatherKind, WeatherLayer};
-pub use effect::{AuraLayer, AuraStyle, ProcFx, Shape, TenseigaPart, TexId};
+pub use effect::{AuraLayer, AuraStyle, FireworkPart, ProcFx, Shape, TenseigaPart, TexId, FIREWORK_BURST_MS, FIREWORK_MS};
 pub use particle::{Emitter, EmitterDef, Glow, Waterfall, Wind};
 pub use fx::{Fx, FxId};
 pub use post::PostSettings;

@@ -472,10 +472,13 @@ mod log_path_tests {
     }
 }
 
-/// `--weather` names: snow, rain, petals, leaves, fog, clouds.
-fn weather_kind(name: &str) -> Option<ro_render::WeatherKind> {
+/// `--weather` names: snow, rain, petals, leaves, fog, clouds, fireworks.
+fn weather_kind(name: &str) -> Option<weather::Sky> {
     use ro_render::WeatherKind::*;
-    Some(match name.trim() {
+    if name.trim() == "fireworks" {
+        return Some(weather::Sky::Fireworks);
+    }
+    Some(weather::Sky::Layer(match name.trim() {
         "snow" => Snow,
         "rain" => Rain,
         "petals" | "sakura" => Petals,
@@ -483,5 +486,5 @@ fn weather_kind(name: &str) -> Option<ro_render::WeatherKind> {
         "fog" => Fog,
         "clouds" => Clouds,
         _ => return None,
-    })
+    }))
 }
