@@ -72,6 +72,9 @@ pub struct Label {
     pub orbs: u16,
     /// What they are (see `ro_net::Event::Spirits`); sets the colour.
     pub orb_kind: u8,
+    /// Window pixels per sprite pixel at the actor (`Renderer::sprite_pixel`): the spheres
+    /// keep to the sprite's head at any zoom.
+    pub sprite_px: f32,
 }
 
 #[derive(Default)]
@@ -275,12 +278,14 @@ impl Hud {
             }
             painter.text(pos, Align2::CENTER_TOP, &l.text, font, l.color);
             if l.orbs > 0 {
-                // Spheres circling over the head, as the original draws them.
+                // Spheres circling over the head, as the original draws them. Sized in sprite
+                // pixels: a fixed offset in window points sat at the waist when zoomed in.
                 let t = ctx.input(|i| i.time) as f32;
-                let centre = egui::pos2(l.feet.x / ppp, l.feet.y / ppp - 95.0);
+                let px = l.sprite_px / ppp;
+                let centre = egui::pos2(l.feet.x / ppp, l.feet.y / ppp - 73.0 * px);
                 for k in 0..l.orbs.min(15) {
                     let a = t * 1.6 + k as f32 * std::f32::consts::TAU / l.orbs.min(15) as f32;
-                    let p = centre + Vec2::new(a.cos() * 26.0, a.sin() * 9.0);
+                    let p = centre + Vec2::new(a.cos() * 20.0 * px, a.sin() * 7.0 * px);
                     let (glow, core) = match l.orb_kind {
                         1 => ((170, 80, 255), (215, 170, 255)),
                         2 => ((80, 200, 255), (200, 240, 255)),
@@ -291,8 +296,8 @@ impl Hud {
                         14 => ((60, 220, 90), (160, 255, 170)),
                         _ => ((255, 160, 30), (255, 215, 80)),
                     };
-                    painter.circle_filled(p, 7.0, Color32::from_rgba_unmultiplied(glow.0, glow.1, glow.2, 90));
-                    painter.circle(p, 4.0, Color32::from_rgb(core.0, core.1, core.2), egui::Stroke::new(1.0, Color32::from_rgb(glow.0 / 2, glow.1 / 2, glow.2 / 2)));
+                    painter.circle_filled(p, (5.3 * px).max(2.0), Color32::from_rgba_unmultiplied(glow.0, glow.1, glow.2, 90));
+                    painter.circle(p, (3.0 * px).max(1.2), Color32::from_rgb(core.0, core.1, core.2), egui::Stroke::new(1.0, Color32::from_rgb(glow.0 / 2, glow.1 / 2, glow.2 / 2)));
                 }
                 ctx.request_repaint();
             }

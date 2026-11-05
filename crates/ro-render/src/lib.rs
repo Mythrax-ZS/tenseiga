@@ -1706,6 +1706,19 @@ impl Renderer {
         let ndc = clip.truncate() / clip.w;
         Some(glam::Vec2::new((ndc.x + 1.0) * 0.5 * w, (1.0 - ndc.y) * 0.5 * h))
     }
+
+    /// Window pixels one sprite pixel covers at a world point (as sprite.wgsl sizes them:
+    /// with perspective, but screen-aligned, so not foreshortened by the camera's tilt).
+    /// HUD art that belongs with a sprite, such as spirit spheres, scales by this.
+    pub fn sprite_pixel(&self, p: glam::Vec3, size: (u32, u32)) -> Option<f32> {
+        let (w, h) = (size.0 as f32, size.1 as f32);
+        let clip = self.camera.view_proj(w / h) * p.extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let f = 1.0 / (self.camera.fovy / 2.0).tan();
+        Some(CELL / sprite::PIXELS_PER_CELL * f / clip.w * 0.5 * h)
+    }
 }
 
 /// A one-texel-per-cell mask (255 drawn, 0 hidden) for indoor maps.
