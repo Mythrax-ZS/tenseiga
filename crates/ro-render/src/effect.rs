@@ -102,6 +102,29 @@ pub enum Shape {
     /// EF_COLORPAPER, the wedding ceremony: scraps of coloured paper showering down around
     /// `pos` and tumbling as they fall (alpha-blended, so they keep their colours).
     Confetti { seed: u32 },
+    /// One piece of a firework (the fireworks mapflag): a rocket going up from `pos`, bursting
+    /// `rise` cells over it `FIREWORK_BURST_MS` in, in the effect's colour; `seed` varies it.
+    Firework { part: FireworkPart, seed: u32, rise: f32 },
+}
+
+/// When a firework's rocket bursts (ms after it goes up).
+pub const FIREWORK_BURST_MS: f32 = 750.0;
+/// How long a firework lasts, rocket to the last twinkle.
+pub const FIREWORK_MS: f32 = FIREWORK_BURST_MS + 3200.0;
+
+/// The pieces of a firework; the bursts are the original's EF_POKJUK art (effect\pokjuk_a..d).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FireworkPart {
+    /// The rocket going up, its trail behind it (a soft glow).
+    Rocket,
+    /// The burst's streaks flying out (pokjuk_a, tinted).
+    Bloom,
+    /// A flash of spray as it bursts (pokjuk_d, tinted).
+    Spray,
+    /// Gold glitter that lingers and droops (pokjuk_b, its own colours).
+    Glitter,
+    /// Twinkles left drifting down, flickering out (pokjuk_c, tinted).
+    Twinkle,
 }
 
 /// The pieces the Mortal Flame skills' effects are built from. Streaks and rings use
@@ -347,6 +370,83 @@ fn confetti(seed: u32, pos: Vec3, time_ms: f32, eye: Vec3, out: &mut Vec<Vertex>
         let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color };
         let (p0, p1, p2, p3) = (v(centre - a - b, 0.0, 1.0), v(centre + a - b, 1.0, 1.0), v(centre + a + b, 1.0, 0.0), v(centre - a + b, 0.0, 0.0));
         out.extend([p0, p1, p2, p0, p2, p3]);
+    }
+}
+
+/// A firework's `part` at `time_ms`: the rocket climbs from `pos`, slowing, and bursts `rise`
+/// cells up; the burst's pieces grow out from there and sink as they fade, each turned its own
+/// way. Sizes in cells: the bloom spans 7 to 12.
+fn firework(part: FireworkPart, seed: u32, rise: f32, pos: Vec3, time_ms: f32, tint: [f32; 3], eye: Vec3, out: &mut Vec<Vertex>) {
+    let r = |n: u32| (hash(seed ^ n.wrapping_mul(0x85eb_ca6b)) & 0xffff) as f32 / 65535.0;
+    let apex = pos + Vec3::Y * rise * CELL;
+    // Milliseconds since the burst, and how far it has sunk by then.
+    let since = time_ms - FIREWORK_BURST_MS;
+    let sink = |ms: f32, k: f32| Vec3::Y * -(ms.max(0.0) / 1000.0).powi(2) * k * CELL;
+    let size = (3.5 + r(1) * 2.5) * CELL;
+    let smooth = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    // A camera-facing square `half` across at `c`, turned by `turn`.
+    let mut sprite = |c: Vec3, half: f32, turn: f32, color: [f32; 4]| {
+        let (right, up) = facing(c, eye);
+        let (s, k) = turn.sin_cos();
+        quad(out, c, (right * k + up * s) * half, (up * k - right * s) * half, color);
+    };
+    match part {
+        FireworkPart::Rocket => {
+            if time_ms >= FIREWORK_BURST_MS {
+                return;
+            }
+            // Fast off the ground, slowing to the top; a wobble; a trail of fading sparks.
+            let at = |ms: f32| {
+                let k = ease_out(ms / FIREWORK_BURST_MS);
+                pos + Vec3::new((ms * 0.02 + r(2) * 6.3).sin() * 0.12 * CELL, 0.0, 0.0) + (apex - pos) * k
+            };
+            let warm = mix(tint, [1.0, 0.85, 0.6], 0.6);
+            for i in 0..10 {
+                let ms = time_ms - i as f32 * 28.0;
+                if ms < 0.0 {
+                    break;
+                }
+                let k = 1.0 - i as f32 / 10.0;
+                sprite(at(ms), (0.32 * k + 0.08) * CELL, 0.0, rgba(warm, 1.6, k));
+            }
+        }
+        FireworkPart::Bloom => {
+            if !(0.0..1700.0).contains(&since) {
+                return;
+            }
+            let half = size * (0.2 + 0.8 * ease_out(since / 800.0));
+            let a = 1.0 - smooth(500.0, 1700.0, since);
+            sprite(apex + sink(since, 0.8), half, r(3) * 6.3, rgba(tint, 1.7, a));
+        }
+        FireworkPart::Spray => {
+            if !(0.0..450.0).contains(&since) {
+                return;
+            }
+            let half = size * 0.75 * (0.4 + 0.6 * ease_out(since / 250.0));
+            let a = 1.0 - since / 450.0;
+            sprite(apex, half, r(4) * 6.3, rgba(mix(tint, [1.0; 3], 0.5), 2.2, a));
+        }
+        FireworkPart::Glitter => {
+            if !(120.0..2700.0).contains(&since) {
+                return;
+            }
+            let s = since - 120.0;
+            let half = size * 0.9 * (0.45 + 0.55 * ease_out(s / 1300.0));
+            let a = smooth(0.0, 150.0, s) * (1.0 - smooth(1200.0, 2580.0, s));
+            sprite(apex + sink(since, 1.4), half * 0.85, r(5) * 6.3, rgba([1.0; 3], 0.9, a * 0.8));
+        }
+        FireworkPart::Twinkle => {
+            if !(500.0..3200.0).contains(&since) {
+                return;
+            }
+            let s = since - 500.0;
+            let flicker = 0.55 + 0.45 * (s * 0.03 + r(6) * 6.3).sin();
+            let a = smooth(0.0, 300.0, s) * (1.0 - smooth(1500.0, 2700.0, s)) * flicker;
+            sprite(apex + sink(since, 1.8), size * 1.1, r(7) * 6.3, rgba(mix(tint, [1.0; 3], 0.3), 1.6, a));
+        }
     }
 }
 
@@ -724,6 +824,7 @@ impl ProcFx {
                 out.extend([a, b, cc, a, cc, d]);
             }
             Shape::Confetti { seed } => confetti(seed, self.pos, self.time_ms, eye, out),
+            Shape::Firework { part, seed, rise } => firework(part, seed, rise, self.pos, self.time_ms, self.color, eye, out),
             Shape::Cell { heights } => {
                 let color = [self.color[0], self.color[1], self.color[2], 0.5];
                 let v = |i: usize, x: f32, z: f32| Vertex { pos: (self.pos + Vec3::new(x * CELL, heights[i] + 0.2, z * CELL)).into(), uv: [x, z], color };

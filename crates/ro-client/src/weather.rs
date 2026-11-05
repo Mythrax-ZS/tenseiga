@@ -35,29 +35,42 @@ impl WeatherMode {
     }
 }
 
+/// What the server can turn on: weather the renderer draws in layers, or fireworks (set off
+/// here, one after another, while they are on).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sky {
+    Layer(WeatherKind),
+    Fireworks,
+}
+
 /// The weather a special effect turns on (rAthena's clif_weather_check, plus EF_RAIN).
-pub fn from_effect(effect: u32) -> Option<WeatherKind> {
+pub fn from_effect(effect: u32) -> Option<Sky> {
+    use Sky::Layer;
     Some(match effect {
-        161 => WeatherKind::Rain,         // EF_RAIN
-        162 => WeatherKind::Snow,         // EF_SNOW (snow)
-        163 => WeatherKind::Petals,       // EF_SAKURA (sakura)
-        333 => WeatherKind::Leaves,       // EF_MAPLE (leaves)
-        233 | 516 => WeatherKind::Clouds, // EF_CLOUD3 (clouds), EF_CLOUD5 (clouds2)
-        515 => WeatherKind::Fog,          // EF_CLOUD4 (fog)
+        161 => Layer(WeatherKind::Rain),         // EF_RAIN
+        162 => Layer(WeatherKind::Snow),         // EF_SNOW (snow)
+        163 => Layer(WeatherKind::Petals),       // EF_SAKURA (sakura)
+        333 => Layer(WeatherKind::Leaves),       // EF_MAPLE (leaves)
+        233 | 516 => Layer(WeatherKind::Clouds), // EF_CLOUD3 (clouds), EF_CLOUD5 (clouds2)
+        515 => Layer(WeatherKind::Fog),          // EF_CLOUD4 (fog)
+        // EF_POKJUK, EF_THROWITEM2, EF_POKJUK_SOUND (fireworks)
+        297 | 299 | 301 => Sky::Fireworks,
         _ => return None,
     })
 }
 
-/// The weather the server's message says has stopped (rAthena's msg 1203..1213), or Some(None)
+/// The weather the server's message says has stopped (rAthena's msg 1201..1215), or Some(None)
 /// for all of it (@clearweather, msg 291).
-pub fn stopped(text: &str) -> Option<Option<WeatherKind>> {
+pub fn stopped(text: &str) -> Option<Option<Sky>> {
+    use Sky::Layer;
     Some(Some(match text.trim() {
-        "Snow has stopped falling." => WeatherKind::Snow,
-        "Cherry tree leaves no longer fall." => WeatherKind::Petals,
-        "The clouds has disappear." | "The alternative clouds disappear." => WeatherKind::Clouds,
-        "The fog has gone." => WeatherKind::Fog,
-        "Leaves no longer fall." => WeatherKind::Leaves,
-        "The rain has stopped." => WeatherKind::Rain,
+        "Snow has stopped falling." => Layer(WeatherKind::Snow),
+        "Cherry tree leaves no longer fall." => Layer(WeatherKind::Petals),
+        "The clouds has disappear." | "The alternative clouds disappear." => Layer(WeatherKind::Clouds),
+        "The fog has gone." => Layer(WeatherKind::Fog),
+        "Leaves no longer fall." => Layer(WeatherKind::Leaves),
+        "The rain has stopped." => Layer(WeatherKind::Rain),
+        "Fireworks have ended." => Sky::Fireworks,
         "Weather effects will dispell on warp/refresh" => return Some(None),
         _ => return None,
     }))
@@ -92,12 +105,17 @@ fn showering(map: &str, unix_secs: u64) -> bool {
 #[derive(Default)]
 pub struct Weather {
     /// The server's weather on this map.
-    server: Vec<WeatherKind>,
+    server: Vec<Sky>,
     /// The last thing the server sent was one of its weather effects: a run is going on (the
     /// next effect joins it, and a message straight after it was already answered by it).
     in_run: bool,
     /// `--weather snow,fog`: shown on every map (captures).
-    forced: Vec<WeatherKind>,
+    forced: Vec<Sky>,
+    /// Fireworks: until the next goes up (ms), the bangs still to come (ms until each), and
+    /// the dice for when and where.
+    next_launch_ms: f32,
+    bangs: Vec<f32>,
+    dice: u32,
     /// Each kind's strength as shown, eased toward what is wanted.
     shown: HashMap<WeatherKind, f32>,
     /// Each kind's texture once loaded (and how many pictures it holds side by side).
@@ -106,7 +124,7 @@ pub struct Weather {
 
 impl Weather {
     /// With `forced` weather on every map (`--weather`).
-    pub fn with_forced(forced: Vec<WeatherKind>) -> Self {
+    pub fn with_forced(forced: Vec<Sky>) -> Self {
         Self { forced, ..Default::default() }
     }
 
@@ -123,7 +141,7 @@ impl Weather {
     }
 
     /// One of the server's weather effects: part of the set still on.
-    pub fn server_on(&mut self, kind: WeatherKind) {
+    pub fn server_on(&mut self, kind: Sky) {
         if !self.in_run && !self.server.is_empty() {
             tracing::info!(was = ?self.server, "weather set changes");
             self.server.clear();
@@ -152,7 +170,10 @@ impl Weather {
     pub fn update(&mut self, dt_ms: f32, mode: WeatherMode, map: &str, climate: Option<&str>, r: &mut ro_render::Renderer, vfs: &ro_vfs::Vfs) {
         let mut want: Vec<(WeatherKind, f32)> = vec![];
         if mode != WeatherMode::Off {
-            want.extend(self.server.iter().chain(&self.forced).map(|k| (*k, 1.0)));
+            want.extend(self.server.iter().chain(&self.forced).filter_map(|s| match s {
+                Sky::Layer(k) => Some((*k, 1.0)),
+                Sky::Fireworks => None,
+            }));
         }
         if let (WeatherMode::Ambient, Some(climate)) = (mode, climate) {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -182,6 +203,87 @@ impl Weather {
             let (tex, frames) = *self.textures.entry(kind).or_insert_with(|| texture(kind, r, vfs));
             r.weather.push(WeatherLayer { kind, tex, frames, strength });
         }
+    }
+}
+
+impl Weather {
+    /// A steady random number in 0..1.
+    fn roll(&mut self) -> f32 {
+        if self.dice == 0 {
+            self.dice = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() | 1);
+        }
+        self.dice = self.dice.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (self.dice >> 8) as f32 / 16_777_216.0
+    }
+
+    /// Fireworks over `dt_ms`: how many go up now, and how many bang (each as its rocket
+    /// bursts). While they are on one goes up every half second to two seconds, now and then
+    /// a quick volley.
+    pub fn fireworks(&mut self, dt_ms: f32, mode: WeatherMode) -> (Vec<Launch>, u32) {
+        for b in &mut self.bangs {
+            *b -= dt_ms;
+        }
+        let bangs = self.bangs.iter().filter(|b| **b <= 0.0).count() as u32;
+        self.bangs.retain(|b| *b > 0.0);
+        let on = mode != WeatherMode::Off && self.server.iter().chain(&self.forced).any(|s| *s == Sky::Fireworks);
+        if !on {
+            self.next_launch_ms = 0.0;
+            return (vec![], bangs);
+        }
+        // Back from a long pause (a minimised window): no pile of rockets at once.
+        self.next_launch_ms = (self.next_launch_ms - dt_ms).max(-500.0);
+        let mut launches = vec![];
+        while self.next_launch_ms <= 0.0 {
+            let launch = Launch { across: self.roll() * 2.0 - 1.0, depth: self.roll() * 2.0 - 1.0, rise: 9.0 + self.roll() * 5.0, colour: self.roll(), seed: self.dice };
+            launches.push(launch);
+            self.bangs.push(ro_render::FIREWORK_BURST_MS);
+            self.next_launch_ms += if self.roll() < 0.2 { 120.0 + self.roll() * 200.0 } else { 500.0 + self.roll() * 1500.0 };
+        }
+        (launches, bangs)
+    }
+}
+
+/// One firework going up: where across the screen (-1..1) and how far into it (-1..1, from
+/// near to far), how high it bursts (cells), its colour (0..1 picks one) and a seed.
+#[derive(Clone, Copy, Debug)]
+pub struct Launch {
+    pub across: f32,
+    pub depth: f32,
+    pub rise: f32,
+    pub colour: f32,
+    pub seed: u32,
+}
+
+/// The fireworks' colours.
+const FIREWORK_COLOURS: [[f32; 3]; 7] = [[1.0, 0.3, 0.3], [1.0, 0.78, 0.3], [0.4, 1.0, 0.45], [0.4, 0.65, 1.0], [0.85, 0.45, 1.0], [1.0, 0.5, 0.85], [0.95, 0.95, 1.0]];
+
+/// Sets a firework off around the camera's focus: it bursts over a spot within the view
+/// (`launch.across` and `depth`), so its rocket goes up from nearer the camera by as much as
+/// its height lifts it up the screen.
+pub fn set_off(launch: Launch, fx: &mut crate::fx::FxLib, r: &mut ro_render::Renderer, vfs: &ro_vfs::Vfs) {
+    use ro_render::{FireworkPart, Shape, CELL};
+    if !r.show_effects {
+        return;
+    }
+    let cam = r.camera;
+    let (sy, cy) = cam.yaw.sin_cos();
+    // Toward the camera along the ground, and across the screen.
+    let toward = glam::Vec3::new(sy, 0.0, -cy);
+    let across = glam::Vec3::new(cy, 0.0, sy);
+    let spot = cam.target + across * launch.across * 14.0 * CELL - toward * launch.depth * 4.0 * CELL;
+    let pos = spot + toward * launch.rise * CELL / cam.pitch.tan().max(0.3);
+    let colour = FIREWORK_COLOURS[(launch.colour * FIREWORK_COLOURS.len() as f32) as usize % FIREWORK_COLOURS.len()];
+    let parts = [
+        (FireworkPart::Rocket, fx.fx_texture(r, vfs, crate::fx::FxTexture::Glow)),
+        (FireworkPart::Glitter, fx.texture(r, vfs, "pokjuk_b.bmp")),
+        (FireworkPart::Twinkle, fx.texture_white(r, vfs, "pokjuk_c.bmp")),
+        (FireworkPart::Bloom, fx.texture_white(r, vfs, "pokjuk_a.bmp")),
+        (FireworkPart::Spray, fx.texture_white(r, vfs, "pokjuk_d.bmp")),
+    ];
+    for (part, tex) in parts {
+        let Some(tex) = tex else { continue };
+        let shape = Shape::Firework { part, seed: launch.seed, rise: launch.rise };
+        r.procs.push(ro_render::ProcFx { tex, shape, pos, color: colour, time_ms: 0.0, duration_ms: ro_render::FIREWORK_MS });
     }
 }
 
@@ -281,41 +383,68 @@ mod tests {
 
     #[test]
     fn the_servers_weather_effects() {
-        assert_eq!(from_effect(162), Some(WeatherKind::Snow));
-        assert_eq!(from_effect(163), Some(WeatherKind::Petals));
-        assert_eq!(from_effect(333), Some(WeatherKind::Leaves));
-        assert_eq!(from_effect(233), Some(WeatherKind::Clouds));
-        assert_eq!(from_effect(516), Some(WeatherKind::Clouds));
-        assert_eq!(from_effect(515), Some(WeatherKind::Fog));
-        assert_eq!(from_effect(297), None, "fireworks stay effects");
+        let layer = |k| Some(Sky::Layer(k));
+        assert_eq!(from_effect(162), layer(WeatherKind::Snow));
+        assert_eq!(from_effect(163), layer(WeatherKind::Petals));
+        assert_eq!(from_effect(333), layer(WeatherKind::Leaves));
+        assert_eq!(from_effect(233), layer(WeatherKind::Clouds));
+        assert_eq!(from_effect(516), layer(WeatherKind::Clouds));
+        assert_eq!(from_effect(515), layer(WeatherKind::Fog));
+        assert_eq!(from_effect(297), Some(Sky::Fireworks));
+        assert_eq!(from_effect(301), Some(Sky::Fireworks));
+        assert_eq!(from_effect(298), None);
+    }
+
+    #[test]
+    fn fireworks_go_up_while_on_and_bang_as_they_burst() {
+        let mut w = Weather::default();
+        assert!(w.fireworks(16.0, WeatherMode::Server).0.is_empty());
+        w.server_on(Sky::Fireworks);
+        // On: one goes up at once, more over the next ten seconds; each bangs as it bursts.
+        let (mut up, mut bangs) = (0, 0);
+        for _ in 0..625 {
+            let (l, b) = w.fireworks(16.0, WeatherMode::Server);
+            up += l.len();
+            bangs += b;
+        }
+        assert!((5..=30).contains(&up), "{up} in 10 s");
+        assert!(bangs as usize >= up - 2 && bangs as usize <= up, "{bangs} bangs for {up}");
+        // Weather off in Settings, or the server's "Fireworks have ended.": none.
+        assert!((0..100).all(|_| w.fireworks(16.0, WeatherMode::Off).0.is_empty()));
+        w.server_other();
+        w.server_said("Fireworks have ended.");
+        assert!((0..100).all(|_| w.fireworks(16.0, WeatherMode::Ambient).0.is_empty()));
+        // A long pause: a rocket or two, not one for every second missed.
+        w.server_on(Sky::Fireworks);
+        assert!(w.fireworks(60_000.0, WeatherMode::Server).0.len() <= 2);
     }
 
     #[test]
     fn each_burst_is_all_the_servers_weather() {
         let mut w = Weather::default();
         // @snow, then @sakura: the second run holds both.
-        w.server_on(WeatherKind::Snow);
+        w.server_on(Sky::Layer(WeatherKind::Snow));
         w.server_said("It has started to snow.");
-        w.server_on(WeatherKind::Snow);
-        w.server_on(WeatherKind::Petals);
+        w.server_on(Sky::Layer(WeatherKind::Snow));
+        w.server_on(Sky::Layer(WeatherKind::Petals));
         w.server_said("Cherry tree leaves have begun to fall.");
-        assert_eq!(w.server, [WeatherKind::Snow, WeatherKind::Petals]);
+        assert_eq!(w.server, [Sky::Layer(WeatherKind::Snow), Sky::Layer(WeatherKind::Petals)]);
         // @sakura off: snow alone is sent again, then the message (which the run overrules).
         w.server_other();
-        w.server_on(WeatherKind::Snow);
+        w.server_on(Sky::Layer(WeatherKind::Snow));
         w.server_said("Cherry tree leaves no longer fall.");
-        assert_eq!(w.server, [WeatherKind::Snow]);
+        assert_eq!(w.server, [Sky::Layer(WeatherKind::Snow)]);
         // @snow off: nothing is sent; the message clears it.
         w.server_said("Snow has stopped falling.");
         assert!(w.server.is_empty());
         // Entering a map (its weather, then more), and turning it off straight away.
         w.clear_server();
-        w.server_on(WeatherKind::Rain);
+        w.server_on(Sky::Layer(WeatherKind::Rain));
         w.server_other();
         w.server_said("The rain has stopped.");
         assert!(w.server.is_empty());
-        w.server_on(WeatherKind::Fog);
-        w.server_on(WeatherKind::Leaves);
+        w.server_on(Sky::Layer(WeatherKind::Fog));
+        w.server_on(Sky::Layer(WeatherKind::Leaves));
         w.server_other();
         w.server_said("Weather effects will dispell on warp/refresh");
         assert!(w.server.is_empty());
