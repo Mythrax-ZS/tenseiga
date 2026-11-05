@@ -49,7 +49,7 @@ epute*.bson)
 - [x] ZC_EXTEND_BODYITEM_SIZE (+ ACK / MSGBOX): slot count, + button, confirmation
 
 ## World
-- [~] ZC_MVP, ZC_MVP_GETTING_ITEM, ZC_MVP_GETTING_SPECIAL_EXP, ZC_THROW_MVPITEM (built; not seen in game yet)
+- [x] ZC_MVP (the MVP effect over the killer and "… is the MVP!"), ZC_MVP_GETTING_ITEM (the reward in chat): tested with an @monster MVP. ZC_MVP_GETTING_SPECIAL_EXP and ZC_THROW_MVPITEM are handled but never sent by rAthena at this PACKETVER: clif_mvp_exp drops the packet from 2013-12-23 (a cyan chat line instead, with battle config `mvp_exp_reward_message`), and nothing calls clif_mvp_noitem (a reward that doesn't fit is a failed add and drops to the floor)
 - [x] ZC_NOTIFY_POSITION_TO_GROUPM / GUILDM (party members off-screen on the minimap)
 - [x] ZC_NOTIFY_MEMBERINFO_TO_GROUPM
 - [x] ZC_NOTIFY_MAPINFO, ZC_BOSS_INFO (Convex Mirror: chat + minimap mark)
@@ -127,7 +127,7 @@ headers and clif.cpp, then compared with what this client reads and sends.
 - [x] CZ_USE_SKILL_START / END: hold Rolling Cutter's shortcut key
 - [x] Inventory items dragged onto the world are dropped (stacks ask how many)
 - [x] Selectable item packages (CZ_USE_PACKAGEITEM): using a box listed in selectpackage\selectpackageitem.lub (iRO's, then kRO's newer boxes) opens a window with its sets and their contents; OK asks for that set. Tested with rAthena's Select_Example1 (101060): set 2 gave its four Level 5 weapons. The window shows the client table's contents, the server gives item_packages.yml's, so a custom box needs both
-- [~] Super Novice: /doridori (CZ_DORIDORI, the SP regen bonus; our head shakes left and right, others don't see it as the server doesn't tell them) and the guardian angel prayer said line by line in chat (msgstringtable 790-793, CZ_CHOPOKGI). Not tested in game (no Super Novice)
+- [x] Super Novice: /doridori (CZ_DORIDORI, the SP regen bonus; our head shakes left and right, others don't see it as the server doesn't tell them) and the guardian angel prayer said line by line in chat (msgstringtable 790-793, CZ_CHOPOKGI). Tested with an Expanded Super Novice: the head shakes; the prayer at 10.03% Base EXP, three separate chat lines, gave Critical Explosion (its cast, CRIT 4 to 54). The whole prayer in one line does nothing, as in the original. No status icon: iRO's stateiconimginfo has none for EFST_EXPLOSIONSPIRITS
 - [ ] Pet emotions (CZ_PET_ACT): when the original sends them is unknown
 - [x] Costumes (OPTION_WEDDING, XMAS, SUMMER, HANBOK, OKTOBERFEST, SUMMER2: the wedding and rAthena's @costume): the body becomes the costume's sprite (결혼, 산타, 여름, 한복, 옥토버패스트, 여름2) without weapon or shield, as the original does from the option alone. Doram keep their own body for now. /changedress and /nocosplay (CZ_REQ_CHANGEDRESS) take it off: tested with the wedding and Xmas costumes
 - [~] Stop attacking with the controller's East button (CZ_CANCEL_LOCKON), /resetskill (CZ_RESET_SKILL, which rAthena runs as @resetskill, so GMs only): not tested in game
