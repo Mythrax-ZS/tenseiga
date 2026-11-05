@@ -326,23 +326,23 @@ fn wet_surface(lit: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> v
     let field = cloud_noise(world.xz / 34.0) * 0.65 + cloud_noise(world.xz / 11.0 + vec2(7.1, 3.3)) * 0.35;
     let fill = 0.68 - 0.07 * g.wet.x;
     let puddle = smoothstep(fill, fill + 0.04, field) * w * smoothstep(0.9, 0.97, n.y) * ground;
-    let ring = drops(world.xz, g.params.x) * (0.1 + 0.7 * puddle) * g.wet.y * ground;
+    let ring = drops(world.xz, g.params.x) * (0.08 + 0.45 * puddle) * g.wet.y * ground;
     let nr = normalize(vec3(n.x + ring.x, n.y, n.z + ring.y));
     let v = normalize(g.eye.xyz - world);
     let fres = pow(1.0 - max(dot(nr, v), 0.0), 5.0);
     // Soaked: darker (a little more on the ground), darker still under a puddle's water.
     let base = lit * (1.0 - (0.22 + 0.13 * ground) * w) * (1.0 - 0.6 * puddle);
     // The drops' rings catch the sky as they spread across a puddle.
-    let mirror = g.wet_sky.rgb * ((0.04 + fres) * 0.25 * w * ground + (0.12 + 0.5 * fres + length(ring) * 0.9) * puddle);
+    let mirror = g.wet_sky.rgb * ((0.04 + fres) * 0.25 * w * ground + (0.12 + 0.5 * fres + length(ring) * 0.5) * puddle);
     let h = normalize(v - g.light_dir.xyz);
     let glint = pow(max(dot(nr, h), 0.0), 120.0) * (0.25 * w + 1.0 * puddle) * cloud_shade(world);
     return base + mirror + srgb_to_linear(g.diffuse.rgb) * glint;
 }
 
-// Raindrops landing: a ring spreading from each, one drop in every 7-unit cell about once a
+// Raindrops landing: a ring spreading from each, one drop in every 5-unit cell about once a
 // second, each cell at its own place and beat. The slope of the rings (for a normal).
 fn drops(p: vec2<f32>, t: f32) -> vec2<f32> {
-    let size = 7.0;
+    let size = 5.0;
     let i0 = floor(p / size);
     var slope = vec2(0.0);
     for (var y = -1; y <= 1; y++) {
@@ -353,8 +353,8 @@ fn drops(p: vec2<f32>, t: f32) -> vec2<f32> {
             let age = fract(t * 1.1 + h1 * 7.0 + h2 * 3.0);
             let d = p - (c + vec2(h1, h2)) * size;
             let r = length(d);
-            let off = r - age * size * 0.9;
-            let ring = (1.0 - age) * exp(-off * off / 0.6) * cos(off * 3.0);
+            let off = r - age * size * 0.75;
+            let ring = (1.0 - age) * exp(-off * off / 0.4) * cos(off * 3.5);
             slope += d / max(r, 1e-3) * ring;
         }
     }

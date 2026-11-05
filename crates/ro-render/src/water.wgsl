@@ -599,10 +599,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4(color, alpha);
 }
 
-// Raindrops landing: a ring spreading from each, one drop in every 7-unit cell about once a
+// Raindrops landing: a ring spreading from each, one drop in every 5-unit cell about once a
 // second, each cell at its own place and beat. The slope of the rings (for a normal).
 fn drops(p: vec2<f32>, t: f32) -> vec2<f32> {
-    let size = 7.0;
+    let size = 5.0;
     let i0 = floor(p / size);
     var slope = vec2(0.0);
     for (var y = -1; y <= 1; y++) {
@@ -613,8 +613,8 @@ fn drops(p: vec2<f32>, t: f32) -> vec2<f32> {
             let age = fract(t * 1.1 + h1 * 7.0 + h2 * 3.0);
             let d = p - (c + vec2(h1, h2)) * size;
             let r = length(d);
-            let off = r - age * size * 0.9;
-            let ring = (1.0 - age) * exp(-off * off / 0.6) * cos(off * 3.0);
+            let off = r - age * size * 0.75;
+            let ring = (1.0 - age) * exp(-off * off / 0.4) * cos(off * 3.5);
             slope += d / max(r, 1e-3) * ring;
         }
     }
