@@ -83,6 +83,8 @@ struct Globals {
     wet_sky: [f32; 4],
     /// Wind for swaying foliage: xy its direction (unit, world xz), z how strong (0 still).
     wind: [f32; 4],
+    /// Night: x how much the windows glow (0 by day).
+    night: [f32; 4],
 }
 
 /// Torches near the player that cast sprite shadows, each with a shadow map.
@@ -274,6 +276,8 @@ pub struct Renderer {
     pub weather: Vec<WeatherLayer>,
     /// STR effects playing this frame; the client advances and removes them.
     pub effects: Vec<Fx>,
+    /// Night life: windows glowing warm (and, in the game, fireflies).
+    pub night_lights: bool,
     /// Heat haze over deserts and volcanoes by day (with the HD-2D look).
     pub heat_haze: bool,
     /// Foliage swaying in the wind (0 still .. 1 lively); the weather makes it blow harder.
@@ -736,6 +740,7 @@ impl Renderer {
             lightning: 0.0,
             foliage_sway: 0.0,
             heat_haze: true,
+            night_lights: true,
             effects: vec![],
             show_effects: true,
             effect_pipeline,
@@ -1167,6 +1172,11 @@ impl Renderer {
         [dir.x, dir.y, self.foliage_sway * gale, 0.0]
     }
 
+    /// How far into night it is (0 day .. 1 night), as the light eases between them.
+    pub fn night_amount(&self) -> f32 {
+        self.night_t
+    }
+
     /// Heat haze now (0..1): over deserts and volcanoes, outdoors, by day; rain and snow cool
     /// it off.
     fn heat(&self) -> f32 {
@@ -1521,6 +1531,8 @@ impl Renderer {
             torch_k: [torches.first().map_or(0.0, |t| t.1), torches.get(1).map_or(0.0, |t| t.1), 1.0 / shadow::TORCH_SIZE as f32, 0.0],
             clouds: self.cloud_globals(),
             wind: self.wind_globals(),
+            // Windows light up as night falls, outdoors (interiors keep their own light).
+            night: [if self.night_lights && self.sky_profile.is_some() && self.room.is_none() { self.night_t * 1.6 } else { 0.0 }, 0.0, 0.0, 0.0],
             wet: [if self.post_settings.enabled { self.wetness } else { 0.0 }, self.raining(), 0.0, 0.0],
             wet_sky: match self.sky_profile.as_ref() {
                 Some(p) => {

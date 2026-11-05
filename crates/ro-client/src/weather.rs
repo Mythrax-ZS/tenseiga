@@ -120,6 +120,8 @@ pub struct Weather {
     /// flickers out within a second), and the thunder still to come (ms until each).
     next_strike_ms: f32,
     since_strike_ms: Option<f32>,
+    /// Fireflies: until the next swarm comes out (ms).
+    next_swarm_ms: f32,
     flicker: [f32; 3],
     thunder: Vec<f32>,
     /// Each kind's strength as shown, eased toward what is wanted.
@@ -288,6 +290,26 @@ impl Weather {
             None => 0.0,
         };
         (flash, claps)
+    }
+}
+
+impl Weather {
+    /// Fireflies over `dt_ms`: on green maps (forests, fields, coasts, highlands, blossom)
+    /// once night has fallen (`night` 0..1), unless it rains: a swarm every few seconds,
+    /// somewhere within view. Where to set one loose (cells from the focus), if now.
+    pub fn fireflies(&mut self, dt_ms: f32, climate: Option<&str>, night: f32) -> Option<glam::Vec2> {
+        let green = matches!(climate, Some("forest" | "temperate" | "blossom" | "highland" | "coastal"));
+        let rain = self.shown.get(&WeatherKind::Rain).copied().unwrap_or(0.0);
+        if !green || night < 0.6 || rain > 0.3 {
+            self.next_swarm_ms = 0.0;
+            return None;
+        }
+        self.next_swarm_ms -= dt_ms;
+        if self.next_swarm_ms > 0.0 {
+            return None;
+        }
+        self.next_swarm_ms = 1800.0 + self.roll() * 2400.0;
+        Some(glam::Vec2::new(self.roll() * 2.0 - 1.0, self.roll() * 2.0 - 1.0) * glam::Vec2::new(16.0, 9.0))
     }
 }
 

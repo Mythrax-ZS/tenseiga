@@ -102,6 +102,9 @@ pub enum Shape {
     /// EF_COLORPAPER, the wedding ceremony: scraps of coloured paper showering down around
     /// `pos` and tumbling as they fall (alpha-blended, so they keep their colours).
     Confetti { seed: u32 },
+    /// A swarm of fireflies wandering around `pos` (within about 4 cells, a cell or two up),
+    /// each blinking on and off in its own time; `seed` varies them.
+    Fireflies { seed: u32 },
     /// One piece of a firework (the fireworks mapflag): a rocket going up from `pos`, bursting
     /// `rise` cells over it `FIREWORK_BURST_MS` in, in the effect's colour; `seed` varies it.
     Firework { part: FireworkPart, seed: u32, rise: f32 },
@@ -370,6 +373,35 @@ fn confetti(seed: u32, pos: Vec3, time_ms: f32, eye: Vec3, out: &mut Vec<Vertex>
         let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color };
         let (p0, p1, p2, p3) = (v(centre - a - b, 0.0, 1.0), v(centre + a - b, 1.0, 1.0), v(centre + a + b, 1.0, 0.0), v(centre - a + b, 0.0, 0.0));
         out.extend([p0, p1, p2, p0, p2, p3]);
+    }
+}
+
+/// Twelve fireflies drifting on slow loops around `pos`, each glowing up and dimming away a
+/// few times over the swarm's life (fading in and out at its ends), a small bright core in a
+/// soft halo.
+fn fireflies(seed: u32, pos: Vec3, time_ms: f32, duration_ms: f32, color: [f32; 3], eye: Vec3, out: &mut Vec<Vertex>) {
+    let life = (time_ms / 800.0).min(1.0) * ((duration_ms - time_ms) / 800.0).clamp(0.0, 1.0);
+    let t = time_ms / 1000.0;
+    for j in 0..12u32 {
+        let r = |n: u32| (hash(seed ^ j.wrapping_mul(0x9e37_79b9) ^ n.wrapping_mul(0x85eb_ca6b)) & 0xffff) as f32 / 65535.0;
+        let (a, b) = (r(1) * 6.283, r(2) * 6.283);
+        let (fa, fb) = (0.25 + r(3) * 0.35, 0.2 + r(4) * 0.3);
+        let centre = pos
+            + Vec3::new(
+                (r(5) * 2.0 - 1.0) * 3.0 + (t * fa + a).sin() * 1.2,
+                0.8 + r(6) * 1.2 + (t * fb * 1.3 + b).sin() * 0.35,
+                (r(7) * 2.0 - 1.0) * 3.0 + (t * fb + b).cos() * 1.2,
+            ) * CELL;
+        // Blinks: on for a moment every couple of seconds.
+        let beat = (t * (0.35 + r(8) * 0.3) + r(9)).fract();
+        let blink = (1.0 - ((beat - 0.25) / 0.2).powi(2)).max(0.0);
+        let a = blink * life;
+        if a <= 0.01 {
+            continue;
+        }
+        let (right, up) = facing(centre, eye);
+        quad(out, centre, right * 0.6 * CELL, up * 0.6 * CELL, rgba(color, 0.7, a));
+        quad(out, centre, right * 0.16 * CELL, up * 0.16 * CELL, rgba(mix(color, [1.0; 3], 0.6), 2.4, a));
     }
 }
 
@@ -825,6 +857,7 @@ impl ProcFx {
             }
             Shape::Confetti { seed } => confetti(seed, self.pos, self.time_ms, eye, out),
             Shape::Firework { part, seed, rise } => firework(part, seed, rise, self.pos, self.time_ms, self.color, eye, out),
+            Shape::Fireflies { seed } => fireflies(seed, self.pos, self.time_ms, self.duration_ms, self.color, eye, out),
             Shape::Cell { heights } => {
                 let color = [self.color[0], self.color[1], self.color[2], 0.5];
                 let v = |i: usize, x: f32, z: f32| Vertex { pos: (self.pos + Vec3::new(x * CELL, heights[i] + 0.2, z * CELL)).into(), uv: [x, z], color };
