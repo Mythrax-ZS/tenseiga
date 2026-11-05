@@ -2004,8 +2004,11 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
             }
         } else {
             let drawing = std::time::Instant::now();
-            if let Err(e) = r.frame() {
-                tracing::error!("frame: {e:#}");
+            // Minimised: nothing to see (the UI's texture changes wait for the next frame drawn).
+            if !self.minimised {
+                if let Err(e) = r.frame() {
+                    tracing::error!("frame: {e:#}");
+                }
             }
             self.perf.split((drawing - self.last_tick).as_secs_f32() * 1000.0, drawing.elapsed().as_secs_f32() * 1000.0);
         }
@@ -2019,6 +2022,22 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
                 None => format!("Tenseiga — {map} {},{} — {w}x{h} — {fps:.0} fps", at.0, at.1),
             };
             window.set_title(&title);
+        }
+    }
+
+    /// How long a frame should take when the window isn't in front: minimised, the game still
+    /// ticks (server messages, chat, walking) ten times a second; behind another window, at
+    /// Settings' background frame rate. None: as fast as the display allows.
+    pub(crate) fn frame_gap(&self) -> Option<std::time::Duration> {
+        if self.capture.is_some() {
+            return None; // hidden capture windows never have focus
+        }
+        if self.minimised {
+            Some(std::time::Duration::from_millis(100))
+        } else if !self.focused && self.settings.background_fps > 0 {
+            Some(std::time::Duration::from_secs(1) / self.settings.background_fps)
+        } else {
+            None
         }
     }
 }

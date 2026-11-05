@@ -1383,6 +1383,10 @@ struct App {
     /// When the current map became ready (for --capture-after).
     ready_at: Option<std::time::Instant>,
     last_tick: std::time::Instant,
+    /// The window has keyboard focus (off: Settings' background frame rate applies).
+    focused: bool,
+    /// The window is minimised: the game keeps ticking, slowly, and draws nothing.
+    minimised: bool,
     window: Option<Arc<Window>>,
     renderer: Option<ro_render::Renderer>,
     /// In the background (Android): its window surface is gone, so nothing draws until resumed.
@@ -2776,13 +2780,32 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        self.tick(el);
+        // Android in the background keeps its Wait; ticking there only notices quitting.
+        if self.paused {
+            self.tick(el);
+            return;
+        }
+        let Some(gap) = self.frame_gap() else {
+            el.set_control_flow(winit::event_loop::ControlFlow::Poll);
+            self.tick(el);
+            return;
+        };
+        // Woken early (a window event): wait out the rest of the gap.
+        if std::time::Instant::now() >= self.last_tick + gap {
+            self.tick(el);
+        }
+        el.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(self.last_tick + gap));
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         // No surface to draw or resize while in the background (Android).
         if self.paused {
             return;
+        }
+        match &event {
+            WindowEvent::Focused(focused) => self.focused = *focused,
+            WindowEvent::Resized(s) => self.minimised = s.width == 0 || s.height == 0,
+            _ => {}
         }
         self.note_keyboard_mouse(&event);
         // Shortcut Settings waiting for a key: the next press becomes the binding, before the UI
