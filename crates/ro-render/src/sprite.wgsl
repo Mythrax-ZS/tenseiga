@@ -31,6 +31,12 @@ struct Globals {
     upscale: vec4<f32>,
     // xyz: direction the sun's light travels, w: ray tracing on (bits: 1 shadows, 2 reflections)
     rt: vec4<f32>,
+    // (Torches, used by the scene.)
+    torch_vp: array<mat4x4<f32>, 2>,
+    torch: array<vec4<f32>, 2>,
+    torch_k: vec4<f32>,
+    // Cloud shadows (cloud_shade).
+    clouds: vec4<f32>,
 };
 
 /// World units (about two cells) a sprite's depth is pulled toward the camera.
@@ -159,7 +165,7 @@ fn fs_main(in: VsOut) -> FsOut {
         // Buildings and trees shade sprites too where shadows are ray traced (from the feet,
         // like the ground the sprite stands on).
         let geometry = sun_ray(in.anchor + vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0), 1u);
-        let here = g.ambient.rgb + g.diffuse.rgb * up * mix(1.0, min(sun_visible(feet), geometry), g.shadow.x);
+        let here = g.ambient.rgb + g.diffuse.rgb * up * mix(1.0, min(sun_visible(feet), geometry), g.shadow.x) * cloud_shade(in.anchor);
         let shade = here / max(full, vec3(0.05));
         let pl = point_light(in.anchor + vec3(0.0, 8.0, 0.0));
         rgb = rgb * mix(vec3(1.0), shade, k) * (1.0 + pl.w * k) + rgb * pl.rgb * k;
@@ -197,7 +203,51 @@ fn in_room(world: vec3<f32>) -> bool {
     return textureLoad(room_mask, cell, 0).r > 0.5;
 }
 
+// Cloud shadows: patches of shade drifting over the map, cast along the sun from a layer of
+// cloud overhead (value noise, four octaves). g.clouds: x how much of the sun a cloud takes
+// (0 off), y how much of the sky is cloud (0..1), zw the drift (world units a second).
+// 1 in the open, less under a cloud; only the sun's share of the light is for it to take.
+fn cloud_shade(world: vec3<f32>) -> f32 {
+    if g.clouds.x <= 0.0 || g.room.x > 0.5 {
+        return 1.0;
+    }
+    let d = g.light_dir.xyz;
+    // Back along the sunlight to the cloud layer, 600 units (120 cells) up.
+    let up = max(-d.y, 0.2);
+    let q = world.xz + d.xz / up * (world.y - 600.0) - g.clouds.zw * g.params.x;
+    var p = q / 260.0;
+    var n = 0.0;
+    var amp = 0.5;
+    for (var o = 0; o < 4; o++) {
+        n += cloud_noise(p) * amp;
+        p = p * 2.03 + vec2(17.3, 41.9);
+        amp *= 0.5;
+    }
+    let edge = mix(0.68, 0.36, g.clouds.y);
+    return 1.0 - g.clouds.x * smoothstep(edge - 0.07, edge + 0.07, n / 0.9375);
+}
+
+fn cloud_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = cloud_hash(i);
+    let b = cloud_hash(i + vec2(1.0, 0.0));
+    let c = cloud_hash(i + vec2(0.0, 1.0));
+    let e = cloud_hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, e, u.x), u.y);
+}
+
+fn cloud_hash(i: vec2<f32>) -> f32 {
+    let v = vec2<u32>(vec2<i32>(i) + vec2(65536));
+    var h = v.x * 747796405u + v.y * 2891336453u + 12345u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+    return f32(h & 0xffffu) / 65535.0;
+}
+
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.
 fn sun_ray(world: vec3<f32>, n: vec3<f32>, rays: u32) -> f32 {
     return 1.0;
 }
+
