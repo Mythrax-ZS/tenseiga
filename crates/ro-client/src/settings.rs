@@ -51,6 +51,10 @@ pub struct Settings {
     pub screenshot_ui: bool,
     /// The performance overlay (F10): frame rate, frame times, ping.
     pub perf_overlay: bool,
+    /// Each chat line shows the time it arrived.
+    pub chat_timestamps: bool,
+    /// Chat is also saved to Chat\<character> <date>.txt (see chatlog).
+    pub chat_log: bool,
     /// Frame rate cap while another window has focus (0: none). Minimised, nothing is drawn.
     pub background_fps: u32,
     /// Borderless full screen (F11).
@@ -93,7 +97,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, background_fps: 30, hud_layout: Default::default(), keys: Default::default(), screen_shake: true, arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
+        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, background_fps: 30, chat_timestamps: false, chat_log: false, hud_layout: Default::default(), keys: Default::default(), screen_shake: true, arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
     }
 }
 
@@ -277,6 +281,13 @@ impl Settings {
         ui.end_row();
         ui.label("Performance");
         ui.checkbox(&mut self.perf_overlay, "Frame rate, frame times and ping (F10)");
+        ui.end_row();
+        ui.label("Chat");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.chat_timestamps, "Time stamps");
+            ui.checkbox(&mut self.chat_log, "Save to file")
+                .on_hover_text("Each character's chat goes to Chat\\<name> <date>.txt in the game folder (beside ScreenShot), a file a day");
+        });
         ui.end_row();
         ui.label("In the background");
         let fps_name = |fps: u32| if fps == 0 { "No frame rate cap".to_string() } else { format!("Up to {fps} fps") };
