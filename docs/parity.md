@@ -49,7 +49,7 @@ epute*.bson)
 - [x] ZC_EXTEND_BODYITEM_SIZE (+ ACK / MSGBOX): slot count, + button, confirmation
 
 ## World
-- [~] ZC_MVP, ZC_MVP_GETTING_ITEM, ZC_MVP_GETTING_SPECIAL_EXP, ZC_THROW_MVPITEM (built; not seen in game yet)
+- [x] ZC_MVP (the MVP effect over the killer and "… is the MVP!"), ZC_MVP_GETTING_ITEM (the reward in chat): tested with an @monster MVP. ZC_MVP_GETTING_SPECIAL_EXP and ZC_THROW_MVPITEM are handled but never sent by rAthena at this PACKETVER: clif_mvp_exp drops the packet from 2013-12-23 (a cyan chat line instead, with battle config `mvp_exp_reward_message`), and nothing calls clif_mvp_noitem (a reward that doesn't fit is a failed add and drops to the floor)
 - [x] ZC_NOTIFY_POSITION_TO_GROUPM / GUILDM (party members off-screen on the minimap)
 - [x] ZC_NOTIFY_MEMBERINFO_TO_GROUPM
 - [x] ZC_NOTIFY_MAPINFO, ZC_BOSS_INFO (Convex Mirror: chat + minimap mark)
