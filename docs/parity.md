@@ -57,6 +57,8 @@ epute*.bson)
 - [x] ZC_UPDATE_MAPINFO (setcell/setwall change client pathing), ZC_MONSTER_INFO (Sense window)
 - [x] ZC_NOTIFY_MAPPROPERTY2 (battleground map type; consumed, nothing to draw)
 - [x] ZC_CHANGE_DIRECTION
+- [x] Weather (the snow, sakura, leaves, clouds, clouds2 and fog mapflags, GM @snow / @sakura / @leaves / @clouds / @clouds2 / @fog; EF_RAIN too): the special effects rAthena sends on entering the map turn on snow, petals, maple leaves, drifting clouds or fog banks, until the map changes (turning a mapflag off sends nothing, so like the original it stays until then). Tested online with @snow and @sakura. Fireworks (EF_POKJUK) stay one-off effects
+- Beyond the original: weather is drawn HD-2D style (crates/ro-render/src/weather.wgsl): thousands of particles placed on the GPU around the camera, still in the world as it moves, lit by the map (dim at night), hidden behind walls and indoors, with /effect. Rain, snow, clouds and fog cloud the sky over (softer shadows, dimmer sun). Settings > Graphics > Weather adds ambient weather by climate (the default): snow on snowy maps, petals in Amatsu and Louyang, leaves in forests, fog in Niflheim, and on temperate, coastal, forest and highland maps a twenty-minute shower about one spell in six, on each map's own clock-driven schedule; `--weather snow,rain` forces it for captures
 - [x] ZC_COUPLENAME (Call Partner notice)
 - [x] ZC_NOTIFY_ACTORINIT (consumed); ZC_SKILL_SCALE not sent by rAthena
 - [x] Taming (ZC_START_CAPTURE / TRYCAPTURE_MONSTER)

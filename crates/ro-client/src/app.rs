@@ -4,6 +4,7 @@ mod audio;
 mod chatlog;
 mod skillarea;
 mod skillarea_db;
+mod weather;
 mod book;
 mod captcha;
 mod memorial;
@@ -568,6 +569,8 @@ struct World {
     room: Option<Vec<u8>>,
     /// A sunken map (dense bubble emitters, like Byalan's lower levels): drawn underwater.
     submerged: bool,
+    /// Its sky profile's climate ("snow", "forest"...), for ambient weather; None indoors.
+    climate: Option<&'static str>,
 }
 
 /// Cells around a room's floor still drawn, so its walls and furniture show.
@@ -1434,6 +1437,8 @@ struct App {
     last_tick: std::time::Instant,
     /// A map loading on its own thread; server events wait until it is in.
     map_load: Option<MapLoad>,
+    /// Snow, rain, petals... (the server's, and ambient by climate).
+    weather: weather::Weather,
     /// A map the loader finished (its files' name), for enter_map to use.
     preloaded: Option<(String, anyhow::Result<LoadedMap>)>,
     /// The window has keyboard focus (off: Settings' background frame rate applies).
@@ -1495,6 +1500,8 @@ impl App {
         // The server's name for the map stays the world's; its files may be another map's.
         let server_name = name;
         let name = map_files(name);
+        // The server sends this map's weather again once we are in.
+        self.weather.clear_server();
         // Loaded on the map loader thread (start_map_load), or here and now.
         let loaded = match self.preloaded.take() {
             Some((files, loaded)) if files == name => Some(loaded),
@@ -1515,6 +1522,7 @@ impl App {
                 let submerged = map.effects.iter().filter(|e| e.0 == 109).count() >= 40;
                 let sky = sky::for_map(vfs, name, &map.lighting, submerged);
                 let outdoors = sky.is_some();
+                let climate = sky.as_ref().map(|s| s.name);
                 tracing::info!(map = name, sky = sky.as_ref().map(|s| s.name), "map sky");
                 r.set_sky_profile(sky);
                 tracing::info!(count = map.lights.len(), first = ?map.lights.first(), "map light sources");
@@ -1565,7 +1573,7 @@ impl App {
                 if self.net.is_some() {
                     r.night = self.server_night || map_night(server_name);
                 }
-                self.world = Some(World { name: server_name.to_string(), outdoors, ground: map.mesh, gat, room: None, submerged });
+                self.world = Some(World { name: server_name.to_string(), outdoors, ground: map.mesh, gat, room: None, submerged, climate });
                 self.ready_at = Some(std::time::Instant::now());
                 // The part of a map load that stays on the frame loop (GPU uploads, effects).
                 tracing::info!(map = name, ms = applying.elapsed().as_millis() as u64, "map applied");

@@ -2265,6 +2265,12 @@ impl App {
             }
             // EF_COLORPAPER: the wedding ceremony's paper shower.
             ScriptEffect { id, effect: 347 } | Wedding(id) => self.wedding_fx(id),
+            // The map's weather (sent on entering it): it lasts until the map changes.
+            ScriptEffect { effect, .. } if weather::from_effect(effect).is_some() => {
+                if let Some(kind) = weather::from_effect(effect) {
+                    self.weather.server_on(kind);
+                }
+            }
             ScriptEffect { id, effect } => {
                 if let Some(q) = fx::ef_quake(effect) {
                     self.quake(q);
