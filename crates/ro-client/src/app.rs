@@ -1839,6 +1839,10 @@ impl App {
         self.leave_character();
         self.ping = None;
         self.units.clear();
+        // Our own entry is keyed by the account id, which every character on the account
+        // shares, and the server only tells a character about effects it has: kept over,
+        // one character's Tenseiga aura showed on the next one picked.
+        self.hat_auras.clear();
         self.devotions.clear();
         self.ground_units.clear();
         self.traps.clear();
