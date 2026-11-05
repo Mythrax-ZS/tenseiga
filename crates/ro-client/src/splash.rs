@@ -107,6 +107,8 @@ impl Splash {
 
     /// Draws the loading screen (`done` once the map is in). Returns false once it has faded away.
     pub fn loading(&mut self, ctx: &egui::Context, done: bool) -> bool {
+        // A map that failed to load is as done as it will get: fade, so the game can be used to leave.
+        let done = done || self.failed.is_some();
         let Some((tex, since)) = &mut self.loading else { return false };
         let now = ctx.input(|i| i.time);
         // Timed from its first frame: the map loads in one go before anything is drawn, so a
