@@ -1886,7 +1886,11 @@ impl App {
             Notice(text) => self.hud.push_chat(ro_net::ChatKind::System, text),
             StyleResult(failed) => self.stylist.result(failed),
             MergeOpen(list) => self.merge.open = Some(list),
-            Merged { reason, .. } => {
+            Merged { index, amount, reason } => {
+                // The other stacks come as item deletions; only this says the kept one's new total.
+                if reason == 0 {
+                    self.inventory.set_amount(index, amount);
+                }
                 let msg = match reason { 0 => "The items were merged.", 1 => "Those items can't be merged.", _ => "You have too many of that item to merge." };
                 self.hud.push_chat(ro_net::ChatKind::System, msg.into());
             }
