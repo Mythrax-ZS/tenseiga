@@ -836,6 +836,21 @@ impl Renderer {
         self.particles.set_glows(&self.device, glows);
     }
 
+    /// Forgets the map: none of it is drawn until the next `set_scene` (a map whose files
+    /// couldn't be loaded, so the last one doesn't stay on screen under the new map's units).
+    pub fn clear_map(&mut self) {
+        self.scene = None;
+        self.rt_bind = None;
+        self.ground = Default::default();
+        self.water = None;
+        self.sky_profile = None;
+        self.point_lights.clear();
+        self.warps.clear();
+        self.set_emitters(vec![], vec![], vec![]);
+        self.set_glows(vec![]);
+        self.set_room_mask(None);
+    }
+
     /// Draws code-built effects in order (additive, or alpha-blended where they shade),
     /// batched into one buffer.
     fn draw_procs(&self, pass: &mut wgpu::RenderPass<'_>, procs: &[ProcFx], label: &str) {

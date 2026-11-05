@@ -1509,6 +1509,12 @@ impl App {
                 if let Some(s) = self.splash.as_mut() {
                     s.fail(format!("{server_name} could not be loaded: {e:#}"));
                 }
+                // Not the last map under this one's units and coordinates: nothing, and a word why.
+                r.clear_map();
+                self.world = None;
+                // Scripted runs and --capture go on rather than wait for a map that won't come.
+                self.ready_at = Some(std::time::Instant::now());
+                self.hud.push_chat(ro_net::ChatKind::System, format!("{server_name} can't be shown: {e:#}. You are there on the server; warp to leave."));
             }
         }
     }
