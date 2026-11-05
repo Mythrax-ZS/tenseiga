@@ -255,7 +255,19 @@ impl App {
                 _ if act.target == me => (damage.to_string(), egui::Color32::from_rgb(255, 90, 90)),
                 _ => (damage.to_string(), egui::Color32::WHITE),
             };
-            self.floaters.push((pos, text, color, 0.0));
+            // Several hits in one (Triple Attack, Double Strafe, Sonic Blow, double attacks):
+            // each hit's share in turn, then the total in yellow above, as the original shows
+            // them. Criticals and Lucky dodges stay one number.
+            let shares = if damage > 0 && !matches!(act.kind, 10 | 11) { hit_shares(damage, act.hits) } else { vec![] };
+            if shares.len() > 1 {
+                let last = (shares.len() - 1) as f32 * HIT_GAP_MS;
+                for (i, share) in shares.iter().enumerate() {
+                    self.floaters.push((pos, share.to_string(), color, -(i as f32) * HIT_GAP_MS));
+                }
+                self.floaters.push((pos + glam::Vec3::Y * ro_render::CELL, damage.to_string(), egui::Color32::from_rgb(255, 225, 80), -last));
+            } else {
+                self.floaters.push((pos, text, color, 0.0));
+            }
         }
         if let Some(pos) = spark {
             self.hit_spark(pos);
@@ -282,5 +294,31 @@ impl App {
             let start = std::time::Instant::now() + std::time::Duration::from_millis(delay as u64);
             self.quakes.push((start, start + std::time::Duration::from_millis(duration as u64)));
         }
+    }
+}
+
+/// Milliseconds between the numbers of a multi-hit attack.
+const HIT_GAP_MS: f32 = 200.0;
+
+/// A multi-hit attack's damage split per hit, the remainder on the last. One share when the
+/// server counts a single hit (or a negative count: drawn as one, e.g. plant mode).
+fn hit_shares(damage: i32, hits: i16) -> Vec<i32> {
+    let n = i32::from(hits.max(1)).min(damage.max(1));
+    let mut shares = vec![damage / n; n as usize];
+    if let Some(last) = shares.last_mut() {
+        *last += damage % n;
+    }
+    shares
+}
+
+#[cfg(test)]
+mod hit_share_tests {
+    #[test]
+    fn damage_splits_across_the_hits() {
+        assert_eq!(super::hit_shares(900, 3), [300, 300, 300]);
+        assert_eq!(super::hit_shares(1000, 3), [333, 333, 334], "the remainder lands last");
+        assert_eq!(super::hit_shares(500, 1), [500]);
+        assert_eq!(super::hit_shares(500, -3), [500], "a negative count is drawn as one");
+        assert_eq!(super::hit_shares(2, 5), [1, 1], "never more numbers than damage");
     }
 }

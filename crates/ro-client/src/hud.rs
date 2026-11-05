@@ -345,6 +345,10 @@ impl Hud {
         }
         // Damage numbers rise and fade over their lifetime.
         for (pos, text, color, age) in floaters {
+            // A later hit of a multi-hit attack waits its turn (a negative age).
+            if *age < 0.0 {
+                continue;
+            }
             let t = age / 1200.0;
             let p = egui::pos2(pos.x / ppp, pos.y / ppp - 60.0 - t * 40.0);
             let alpha = ((1.0 - t) * 255.0) as u8;
