@@ -1059,6 +1059,45 @@ impl App {
                 }
                 r.actors.push(a);
             }
+            // Footsteps: prints in snow, sand and mud, dust off dry dirt and sand.
+            if let (true, Some(vfs)) = (self.settings.visual.footsteps && r.show_effects, self.vfs.as_deref()) {
+                let wet = self.weather.raining() > 0.3;
+                let mut walkers: Vec<(u32, (i32, i32), glam::Vec3)> = self.units.iter().filter(|(_, m)| !is_npc(m.kind)).map(|(id, m)| (*id, (m.walker.cell.0 as i32, m.walker.cell.1 as i32), m.actor.pos)).collect();
+                if let Some(p) = self.player.as_ref() {
+                    walkers.push((self.account_id, (p.walker.cell.0 as i32, p.walker.cell.1 as i32), p.actor.pos));
+                }
+                let near = r.camera.target;
+                for (id, cell, pos) in walkers {
+                    let last = self.steps.insert(id, cell);
+                    let Some(from) = last.filter(|l| *l != cell && (l.0 - cell.0).abs() <= 1 && (l.1 - cell.1).abs() <= 1) else { continue };
+                    if pos.distance(near) > 40.0 * ro_render::CELL {
+                        continue;
+                    }
+                    self.step_count = self.step_count.wrapping_add(1);
+                    let ground = w.surface.at(cell.0, cell.1);
+                    let yaw = ((cell.1 - from.1) as f32).atan2((cell.0 - from.0) as f32);
+                    let side = if self.step_count % 2 == 0 { 1.0 } else { -1.0 };
+                    let at = pos + glam::Vec3::new(-yaw.sin(), 0.0, yaw.cos()) * side * 0.16 * ro_render::CELL;
+                    let print = match ground {
+                        surface::Surface::Snow => Some(([0.16, 0.2, 0.3], 12000.0)),
+                        surface::Surface::Sand => Some(([0.25, 0.16, 0.08], 7000.0)),
+                        surface::Surface::Dirt if wet => Some(([0.1, 0.07, 0.05], 9000.0)),
+                        _ => None,
+                    };
+                    if let (Some((color, ms)), Some(tex)) = (print, self.fx.fx_texture(r, vfs, fx::FxTexture::Disc)) {
+                        r.procs.push(ro_render::ProcFx { tex, shape: ro_render::Shape::Footprint { yaw }, pos: at, color, time_ms: 0.0, duration_ms: ms });
+                    }
+                    let dust = match ground {
+                        surface::Surface::Sand if !wet => Some([0.86, 0.74, 0.52]),
+                        surface::Surface::Dirt if !wet => Some([0.66, 0.56, 0.42]),
+                        _ => None,
+                    };
+                    if let (Some(color), Some(tex)) = (dust.filter(|_| self.step_count % 2 == 0), self.fx.fx_texture(r, vfs, fx::FxTexture::Disc)) {
+                        r.procs.push(ro_render::ProcFx { tex, shape: ro_render::Shape::Dust { seed: self.step_count.wrapping_mul(2_654_435_761) ^ id }, pos: at, color, time_ms: 0.0, duration_ms: 900.0 });
+                    }
+                }
+                self.steps.retain(|id, _| *id == self.account_id || self.units.contains_key(id));
+            }
             // The ground cursor: texture\grid.tga's corner marks, mint green and half opaque
             // (measured from the original), lying on the cell's corners.
             if let (Some((x, y)), Some(vfs)) = (hover_cell, self.vfs.as_deref()) {

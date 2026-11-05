@@ -102,6 +102,12 @@ pub enum Shape {
     /// EF_COLORPAPER, the wedding ceremony: scraps of coloured paper showering down around
     /// `pos` and tumbling as they fall (alpha-blended, so they keep their colours).
     Confetti { seed: u32 },
+    /// A footprint pressed into snow, sand or mud at `pos` (the foot's own spot), pointing
+    /// along `yaw` (radians from +x toward +z), laid over the ground (alpha-blended, the
+    /// effect's colour). It stays, then fades over the last third of its life.
+    Footprint { yaw: f32 },
+    /// A small puff of dust kicked up at `pos` by a footstep, spreading and settling.
+    Dust { seed: u32 },
     /// A swarm of fireflies wandering around `pos` (within about 4 cells, a cell or two up),
     /// each blinking on and off in its own time; `seed` varies them.
     Fireflies { seed: u32 },
@@ -249,7 +255,7 @@ pub enum AuraLayer {
 impl ProcFx {
     /// Drawn alpha-blended (darkening) rather than added.
     pub fn shades(&self) -> bool {
-        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. })
+        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. } | Shape::Footprint { .. } | Shape::Dust { .. })
     }
 }
 
@@ -858,6 +864,31 @@ impl ProcFx {
             Shape::Confetti { seed } => confetti(seed, self.pos, self.time_ms, eye, out),
             Shape::Firework { part, seed, rise } => firework(part, seed, rise, self.pos, self.time_ms, self.color, eye, out),
             Shape::Fireflies { seed } => fireflies(seed, self.pos, self.time_ms, self.duration_ms, self.color, eye, out),
+            Shape::Footprint { yaw } => {
+                let fade = (1.5 * (1.0 - t)).min(1.0);
+                let color = [self.color[0], self.color[1], self.color[2], 0.75 * fade];
+                let (s, c) = yaw.sin_cos();
+                let (along, side) = (Vec3::new(c, 0.0, s), Vec3::new(-s, 0.0, c));
+                // Sole and heel: two soft ovals one behind the other.
+                for (back, len, wide) in [(0.0, 0.24, 0.17), (-0.36, 0.15, 0.14)] {
+                    let centre = self.pos + along * back * CELL;
+                    let (a, b) = (along * len * CELL, side * wide * CELL);
+                    let v = |p: Vec3, u: f32, vv: f32| Vertex { pos: p.into(), uv: [u, vv], color };
+                    drape(out, [v(centre - a - b, 0.0, 0.0), v(centre + a - b, 1.0, 0.0), v(centre + a + b, 1.0, 1.0), v(centre - a + b, 0.0, 1.0)], ground, 0.15);
+                }
+            }
+            Shape::Dust { seed } => {
+                for j in 0..4u32 {
+                    let r = |n: u32| (hash(seed ^ j.wrapping_mul(0x9e37_79b9) ^ n.wrapping_mul(0x85eb_ca6b)) & 0xffff) as f32 / 65535.0;
+                    let a = r(1) * 6.283;
+                    let spread = ease_out(t) * (0.25 + r(2) * 0.3);
+                    let centre = self.pos + Vec3::new(a.cos() * spread, 0.15 + t * (0.25 + r(3) * 0.2), a.sin() * spread) * CELL;
+                    let half = (0.18 + 0.4 * ease_out(t)) * (0.8 + r(4) * 0.4) * CELL;
+                    let (right, up) = facing(centre, eye);
+                    let k = (1.0 - t) * (t / 0.15).min(1.0) * 0.45;
+                    quad(out, centre, right * half, up * half * 0.8, [self.color[0], self.color[1], self.color[2], k]);
+                }
+            }
             Shape::Cell { heights } => {
                 let color = [self.color[0], self.color[1], self.color[2], 0.5];
                 let v = |i: usize, x: f32, z: f32| Vertex { pos: (self.pos + Vec3::new(x * CELL, heights[i] + 0.2, z * CELL)).into(), uv: [x, z], color };
@@ -891,5 +922,18 @@ mod drape_tests {
         drape(&mut out, [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)], Some(&ground), 0.5);
         assert_eq!(out.len(), 12 * 12 * 6);
         assert!(out.iter().all(|p| (p.pos[1] - ground.at(p.pos[0], p.pos[2]) - 0.5).abs() < 1e-4));
+    }
+
+    #[test]
+    fn a_footprint_lies_on_the_ground_and_fades() {
+        let ground = Heights::from_corners(1, 1, 10.0, vec![[2.0; 4]]);
+        let print = |time_ms| ProcFx { tex: TexId(0), shape: Shape::Footprint { yaw: 0.5 }, pos: Vec3::new(5.0, 2.0, 5.0), color: [0.4, 0.4, 0.5], time_ms, duration_ms: 9000.0 };
+        let mut out = vec![];
+        print(100.0).vertices(Vec3::new(5.0, 300.0, -200.0), Some(&ground), &mut out);
+        assert_eq!(out.len(), 2 * 12 * 12 * 6, "sole and heel");
+        assert!(out.iter().all(|v| (v.pos[1] - 2.15).abs() < 1e-3 && v.color[3] > 0.7));
+        let mut late = vec![];
+        print(8900.0).vertices(Vec3::new(5.0, 300.0, -200.0), Some(&ground), &mut late);
+        assert!(late[0].color[3] < 0.05);
     }
 }

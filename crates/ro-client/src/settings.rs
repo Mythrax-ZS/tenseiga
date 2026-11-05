@@ -154,6 +154,8 @@ pub struct Visual {
     pub night_lights: bool,
     /// Ourselves, party members and the target shown through walls in front of them.
     pub silhouettes: bool,
+    /// Footprints in snow, sand and mud; dust off dry ground.
+    pub footsteps: bool,
 }
 
 impl Default for Visual {
@@ -174,6 +176,7 @@ impl Default for Visual {
             heat_haze: true,
             night_lights: true,
             silhouettes: true,
+            footsteps: true,
             warmth: p.warmth,
             saturation: p.saturation,
             contrast: p.contrast,
@@ -568,6 +571,9 @@ impl Settings {
         ui.end_row();
         ui.label("Silhouettes").on_hover_text("You, your party and your target show through walls and buildings in front of them");
         ui.checkbox(&mut v.silhouettes, "");
+        ui.end_row();
+        ui.label("Footsteps").on_hover_text("Footprints in snow, sand and mud; dust kicked up off dry dirt and sand");
+        ui.checkbox(&mut v.footsteps, "");
         ui.end_row();
         section(ui, "Look");
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Vignette"));
