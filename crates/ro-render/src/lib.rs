@@ -1623,8 +1623,10 @@ impl Renderer {
             if self.show_effects && !self.weather.is_empty() {
                 let shown = &self.weather[..self.weather.len().min(weather::MAX_LAYERS)];
                 let mut data = [weather::Layer::default(); weather::MAX_LAYERS];
-                for (d, w) in data.iter_mut().zip(shown) {
-                    *d = weather::layer(w, self.camera.target);
+                let mut counts = [0u32; weather::MAX_LAYERS];
+                let inv = self.camera.view_proj(aspect).inverse();
+                for ((d, n), w) in data.iter_mut().zip(&mut counts).zip(shown) {
+                    (*d, *n) = weather::layer(w, self.camera.target, inv);
                 }
                 self.queue.write_buffer(&self.weather_pass.uniform, 0, bytemuck::cast_slice(&data));
                 pass.set_pipeline(&self.weather_pass.pipeline);
@@ -1633,7 +1635,7 @@ impl Renderer {
                     let Some(bind) = self.effect_textures.get(w.tex.0) else { continue };
                     pass.set_bind_group(1, bind, &[]);
                     let first = i as u32 * weather::PER_LAYER;
-                    pass.draw(0..6, first..first + weather::count(w.kind));
+                    pass.draw(0..6, first..first + counts[i]);
                 }
             }
             // Skill effects over everything else in the world.

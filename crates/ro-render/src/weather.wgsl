@@ -1,7 +1,8 @@
 // Weather: snow, rain, petals, leaves, fog banks and clouds. Nothing is simulated on the CPU:
-// each particle's place follows from its index and the time, wrapped into a box around the
-// camera's focus. The box moves with the camera but the particles keep still in the world,
-// so walking through snow passes between the flakes instead of dragging them along.
+// each particle's place follows from its index and the time, wrapped into a tile. The same
+// tile repeats over the world (seamlessly: what leaves one side comes in at the other, just
+// as the next tile's does), and the CPU picks which tiles cover the view. The particles keep
+// still in the world, so walking through snow passes between the flakes.
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -23,7 +24,7 @@ struct Globals {
 struct Layer {
     // count, look (0 billboard, 1 streak, 2 flutter, 3 flat), size, strength (0..1 thins it)
     a: vec4<f32>,
-    // box half width, height, half depth; its floor's height
+    // tile width, height, depth; its floor's height
     box_: vec4<f32>,
     // fall speed, sway amplitude, sway frequency, spin (turns per second)
     motion: vec4<f32>,
@@ -31,13 +32,15 @@ struct Layer {
     wind: vec4<f32>,
     // colour, how much the map's light shades it (0..1)
     tint: vec4<f32>,
-    // focus x, z, frames across the texture, size spread (0..1)
-    focus: vec4<f32>,
+    // first tile's x and z (in tiles), tiles across, frames across the texture
+    tiles: vec4<f32>,
+    // size spread (0..1)
+    more: vec4<f32>,
 };
 
 const MAX_LAYERS: u32 = 8u;
-// Instances per layer: a layer's are `index * PER_LAYER ..`.
-const PER_LAYER: u32 = 16384u;
+// Instances per layer: a layer's are `index * PER_LAYER ..`, tile by tile.
+const PER_LAYER: u32 = 524288u;
 
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(1) @binding(0) var tex: texture_2d<f32>;
@@ -65,16 +68,21 @@ fn rnd(i: u32, k: u32) -> f32 {
 fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
     var o: VsOut;
     let l = layers[ii / PER_LAYER];
-    let i = ii % PER_LAYER;
+    let per = max(u32(l.a.x), 1u);
+    let k = ii % PER_LAYER;
+    // The particle in its tile, and the tile.
+    let i = k % per;
+    let tile = k / per;
+    let across = max(u32(l.tiles.z), 1u);
     let corner = array<vec2<f32>, 6>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0))[vi];
     // Thinned out (a shower starting, a layer fading): this particle sits it out.
-    if f32(i) >= l.a.x || rnd(i, 7u) > l.a.w {
+    if rnd(i, 7u) > l.a.w {
         o.pos = vec4(0.0, 0.0, 2.0, 1.0);
         return o;
     }
     let t = g.params.x;
-    let size = vec3(l.box_.x * 2.0, l.box_.y, l.box_.z * 2.0);
-    let origin = vec3(l.focus.x, l.box_.w, l.focus.y) - vec3(l.box_.x, 0.0, l.box_.z);
+    let size = l.box_.xyz;
+    let origin = vec3((l.tiles.x + f32(tile % across)) * size.x, l.box_.w, (l.tiles.y + f32(tile / across)) * size.z);
     // Each particle falls at its own pace and sways on its own beat.
     let pace = 0.7 + 0.6 * rnd(i, 3u);
     let vel = vec3(l.wind.x, -l.motion.x * pace, l.wind.y);
@@ -83,11 +91,10 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     let q = vec3(rnd(i, 0u), rnd(i, 1u), rnd(i, 2u)) * size + vel * t;
     let local = fract((q - origin) / size) * size;
     let p = origin + local + sway;
-    // Faded where the box wraps (its sides, its top and floor) and right by the eye.
-    let edge = max(abs(local.x / size.x - 0.5), abs(local.z / size.z - 0.5)) * 2.0;
+    // Faded where it wraps from floor to top, and right by the eye.
     let h = local.y / size.y;
-    var fade = (1.0 - smoothstep(0.7, 1.0, edge)) * smoothstep(0.0, 0.08, h) * (1.0 - smoothstep(0.85, 1.0, h));
-    let s = l.a.z * (1.0 - l.focus.w * 0.5 + l.focus.w * rnd(i, 5u));
+    var fade = smoothstep(0.0, 0.08, h) * (1.0 - smoothstep(0.85, 1.0, h));
+    let s = l.a.z * (1.0 - l.more.x * 0.5 + l.more.x * rnd(i, 5u));
     let to_eye = g.eye.xyz - p;
     let near = length(to_eye);
     // Gone before it fills the screen.
@@ -118,7 +125,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
         offset = (right * corner.x + up * corner.y) * s;
     }
     o.pos = g.view_proj * vec4(p + offset, 1.0);
-    let frames = max(l.focus.z, 1.0);
+    let frames = max(l.tiles.w, 1.0);
     let frame = floor(rnd(i, 8u) * frames);
     o.uv = vec2((frame + corner.x * 0.5 + 0.5) / frames, 0.5 - corner.y * 0.5);
     // Lit like the map: dim at night and in dark places, never black.

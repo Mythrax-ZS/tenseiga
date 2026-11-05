@@ -1,7 +1,8 @@
 //! Weather over the map (weather.wgsl): snow, rain, petals, leaves, fog banks, clouds. The
 //! game says which kinds are on and how strongly (`Renderer::weather`); this turns each into
-//! a layer of particles placed on the GPU from their index and the time, in a box around the
-//! camera's focus, lit by the map and hidden behind what stands in front of them.
+//! a layer of particles placed on the GPU from their index and the time. One tile's worth
+//! repeats over the world, and as many tiles are drawn as cover what the camera sees (any
+//! window shape, any zoom); lit by the map and hidden behind what stands in front of them.
 
 use crate::effect::TexId;
 use crate::CELL;
@@ -32,8 +33,10 @@ pub struct WeatherLayer {
 }
 
 pub(crate) const MAX_LAYERS: usize = 8;
-/// Instances per layer (weather.wgsl's PER_LAYER).
-pub(crate) const PER_LAYER: u32 = 16384;
+/// Instances a layer may draw (weather.wgsl's PER_LAYER): its are `index * PER_LAYER ..`.
+pub(crate) const PER_LAYER: u32 = 1 << 19;
+/// How far from the focus weather is drawn at most (cells), however far the camera sees.
+const REACH: f32 = 140.0;
 
 /// weather.wgsl's Layer.
 #[repr(C)]
@@ -44,16 +47,18 @@ pub(crate) struct Layer {
     motion: [f32; 4],
     wind: [f32; 4],
     tint: [f32; 4],
-    focus: [f32; 4],
+    tiles: [f32; 4],
+    more: [f32; 4],
 }
 
 /// How each kind looks and moves (sizes and speeds in cells, seconds).
 struct Preset {
+    /// Particles per tile.
     count: f32,
     look: f32,
     size: f32,
     spread: f32,
-    /// Box half width and height, and how far its floor is below the focus.
+    /// Half a tile's width; its height, and how far its floor is below the focus.
     half: f32,
     height: f32,
     below: f32,
@@ -79,17 +84,60 @@ fn preset(kind: WeatherKind) -> Preset {
     }
 }
 
-/// A layer's uniform: `focus` is the camera's target (world units), where the box is centred.
-pub(crate) fn layer(w: &WeatherLayer, focus: glam::Vec3) -> Layer {
+/// A layer's uniform, and how many instances to draw: `focus` is the camera's target (world
+/// units), and `inv_view_proj` says what the camera sees, which the tiles cover.
+pub(crate) fn layer(w: &WeatherLayer, focus: glam::Vec3, inv_view_proj: glam::Mat4) -> (Layer, u32) {
     let p = preset(w.kind);
-    Layer {
-        a: [p.count.min(PER_LAYER as f32), p.look, p.size * CELL, w.strength.clamp(0.0, 1.0)],
-        box_: [p.half * CELL, p.height * CELL, p.half * CELL, focus.y - p.below * CELL],
+    let tile = 2.0 * p.half * CELL;
+    let floor = focus.y - p.below * CELL;
+    let per = p.count.min(PER_LAYER as f32) as u32;
+    let (x0, z0, nx, nz) = tiles(focus, inv_view_proj, tile, floor, floor + p.height * CELL, p.size * CELL * 1.5, PER_LAYER / per.max(1));
+    let l = Layer {
+        a: [per as f32, p.look, p.size * CELL, w.strength.clamp(0.0, 1.0)],
+        box_: [tile, p.height * CELL, tile, floor],
         motion: [p.fall * CELL, p.sway * CELL, p.sway_hz * std::f32::consts::TAU, p.spin],
         wind: [p.wind[0] * CELL, p.wind[1] * CELL, p.streak * CELL, p.alpha],
         tint: [p.tint[0], p.tint[1], p.tint[2], p.lit],
-        focus: [focus.x, focus.z, w.frames.max(1) as f32, p.spread],
+        tiles: [x0 as f32, z0 as f32, nx as f32, w.frames.max(1) as f32],
+        more: [p.spread, 0.0, 0.0, 0.0],
+    };
+    (l, per * nx * nz)
+}
+
+/// The tiles (`tile` wide, on a grid from the world's origin) covering what the camera sees
+/// between heights `floor` and `top`, widened by `pad` (particles reach past their tile): the
+/// first tile's x and z, and how many across and deep, at most `most` in all.
+fn tiles(focus: glam::Vec3, inv_view_proj: glam::Mat4, tile: f32, floor: f32, top: f32, pad: f32, most: u32) -> (i32, i32, u32, u32) {
+    let reach = REACH * CELL;
+    let centre = glam::Vec2::new(focus.x, focus.z);
+    let (mut lo, mut hi) = (centre, centre);
+    let mut take = |p: glam::Vec3| {
+        let q = centre + (glam::Vec2::new(p.x, p.z) - centre).clamp_length_max(reach);
+        lo = lo.min(q);
+        hi = hi.max(q);
+    };
+    for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let near = inv_view_proj.project_point3(glam::Vec3::new(x, y, 0.0));
+        let far = inv_view_proj.project_point3(glam::Vec3::new(x, y, 1.0));
+        let dir = far - near;
+        take(near);
+        for h in [floor, top] {
+            // Where this corner's ray crosses the height; else as far as it goes, if it heads
+            // that way, or where it starts.
+            let t = if dir.y.abs() > 1e-6 { (h - near.y) / dir.y } else { f32::INFINITY };
+            take(if (0.0..=1.0).contains(&t) { near + dir * t } else if t > 1.0 { far } else { near });
+        }
     }
+    let first = ((lo - pad) / tile).floor();
+    let last = ((hi + pad) / tile).floor();
+    let mut n = last - first + glam::Vec2::ONE;
+    // A camera seeing a great deal at once: the tiles nearest the focus.
+    while (n.x * n.y) as u32 > most.max(1) {
+        n = (n - glam::Vec2::ONE).max(glam::Vec2::ONE);
+    }
+    let home = (centre / tile).floor();
+    let first = first.max(home - (n - glam::Vec2::ONE)).min(home);
+    (first.x as i32, first.y as i32, n.x as u32, n.y as u32)
 }
 
 /// How overcast the weather makes the sky (0 clear .. 1): the strongest layer's say.
@@ -106,11 +154,6 @@ pub(crate) fn overcast(layers: &[WeatherLayer]) -> f32 {
             o * w.strength.clamp(0.0, 1.0)
         })
         .fold(0.0, f32::max)
-}
-
-/// How many instances a kind draws at most.
-pub(crate) fn count(kind: WeatherKind) -> u32 {
-    (preset(kind).count as u32).min(PER_LAYER)
 }
 
 pub(crate) struct WeatherPass {
@@ -170,11 +213,53 @@ mod tests {
 
     #[test]
     fn layers_fit_the_shader() {
-        // weather.wgsl reads an array of 8 layers of six vec4s.
-        assert_eq!(std::mem::size_of::<Layer>(), 6 * 16);
+        // weather.wgsl reads an array of 8 layers of seven vec4s.
+        assert_eq!(std::mem::size_of::<Layer>(), 7 * 16);
+        let mut cam = crate::Camera::default();
+        cam.distance = crate::Camera::MAX_DISTANCE;
+        let inv = cam.view_proj(32.0 / 9.0).inverse();
         for kind in [WeatherKind::Snow, WeatherKind::Rain, WeatherKind::Petals, WeatherKind::Leaves, WeatherKind::Fog, WeatherKind::Clouds] {
-            assert!(count(kind) > 0 && count(kind) <= PER_LAYER);
+            let (_, n) = layer(&WeatherLayer { kind, tex: TexId(0), frames: 1, strength: 1.0 }, cam.target, inv);
+            assert!(n > 0 && n <= PER_LAYER, "{kind:?}: {n}");
         }
+    }
+
+    /// Tiles cover what the camera sees on the ground: all of a wide window, not a box.
+    #[test]
+    fn the_tiles_cover_the_view() {
+        let mut cam = crate::Camera::default();
+        cam.look_at_cell(150, 150);
+        cam.distance = crate::Camera::MAX_DISTANCE;
+        for (aspect, yaw) in [(16.0 / 9.0, 0.0), (32.0 / 9.0, 0.0), (32.0 / 9.0, 0.8)] {
+            cam.yaw = yaw;
+            let inv = cam.view_proj(aspect).inverse();
+            let tile = 52.0 * CELL;
+            let (x0, z0, nx, nz) = tiles(cam.target, inv, tile, cam.target.y - 3.0 * CELL, cam.target.y + 21.0 * CELL, 0.0, u32::MAX);
+            let lo = glam::Vec2::new(x0 as f32, z0 as f32) * tile;
+            let hi = glam::Vec2::new((x0 + nx as i32) as f32, (z0 + nz as i32) as f32) * tile;
+            // The screen's corners and edges, on the ground.
+            for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (0.0, 1.0), (0.0, -1.0), (1.0, 0.0), (-1.0, 0.0)] {
+                let near = inv.project_point3(glam::Vec3::new(sx, sy, 0.0));
+                let far = inv.project_point3(glam::Vec3::new(sx, sy, 1.0));
+                let g = near + (far - near) * ((cam.target.y - near.y) / (far.y - near.y));
+                let g = glam::Vec2::new(g.x, g.z);
+                if g.distance(glam::Vec2::new(cam.target.x, cam.target.z)) > REACH * CELL {
+                    continue;
+                }
+                assert!(g.cmpge(lo).all() && g.cmple(hi).all(), "{aspect} {yaw}: {g} outside {lo}..{hi}");
+            }
+            assert!(nx * nz > 1, "a wide view needs more than one tile");
+        }
+    }
+
+    #[test]
+    fn too_many_tiles_keep_those_by_the_focus() {
+        let mut cam = crate::Camera::default();
+        cam.look_at_cell(150, 150);
+        let (x0, z0, nx, nz) = tiles(cam.target, cam.view_proj(4.0).inverse(), 10.0, 0.0, 10.0, 0.0, 4);
+        assert!(nx * nz <= 4);
+        let c = (glam::Vec2::new(cam.target.x, cam.target.z) / 10.0).floor();
+        assert!((x0 as f32..(x0 + nx as i32) as f32).contains(&c.x) && (z0 as f32..(z0 + nz as i32) as f32).contains(&c.y));
     }
 
     #[test]
@@ -188,10 +273,14 @@ mod tests {
     }
 
     #[test]
-    fn the_box_follows_the_focus_and_strength_is_kept_in_range() {
+    fn the_tiles_follow_the_focus_and_strength_is_kept_in_range() {
         let w = WeatherLayer { kind: WeatherKind::Snow, tex: TexId(0), frames: 1, strength: 3.0 };
-        let l = layer(&w, glam::Vec3::new(100.0, 20.0, 50.0));
-        assert_eq!((l.focus[0], l.focus[1]), (100.0, 50.0));
+        let mut cam = crate::Camera::default();
+        cam.target = glam::Vec3::new(1000.0, 20.0, 500.0);
+        let (l, _) = layer(&w, cam.target, cam.view_proj(16.0 / 9.0).inverse());
+        let tile = l.box_[0];
+        assert!(l.tiles[0] * tile <= 1000.0 && (l.tiles[0] + l.tiles[2]) * tile >= 1000.0);
+        assert!(l.tiles[1] * tile <= 500.0);
         assert_eq!(l.a[3], 1.0);
         assert!(l.box_[3] < 20.0, "the box starts below the focus");
     }

@@ -1,8 +1,10 @@
 //! Weather: what the server turns on (its snow, sakura, leaves, clouds and fog mapflags, and
 //! GM @snow and the like, sent as special effects on entering a map) and, if Settings asks,
 //! ambient weather by climate: snow on snowy maps, petals where cherry trees grow, leaves in
-//! forests, fog in Niflheim, and now and then a shower of rain. Like the original, the
-//! server's weather lasts until the map changes (turning a mapflag off sends nothing).
+//! forests, fog in Niflheim, and now and then a shower of rain. Whenever a map's weather
+//! changes the server sends all that is still on, together: each such burst is the whole of
+//! it. Turning the last kind off sends nothing (the original keeps it until the map changes);
+//! the GM who did it is told so, and that clears it for them.
 
 use std::collections::HashMap;
 
@@ -46,6 +48,24 @@ pub fn from_effect(effect: u32) -> Option<WeatherKind> {
     })
 }
 
+/// The weather the server's message says has stopped (rAthena's msg 1203..1213), or Some(None)
+/// for all of it (@clearweather, msg 291).
+pub fn stopped(text: &str) -> Option<Option<WeatherKind>> {
+    Some(Some(match text.trim() {
+        "Snow has stopped falling." => WeatherKind::Snow,
+        "Cherry tree leaves no longer fall." => WeatherKind::Petals,
+        "The clouds has disappear." | "The alternative clouds disappear." => WeatherKind::Clouds,
+        "The fog has gone." => WeatherKind::Fog,
+        "Leaves no longer fall." => WeatherKind::Leaves,
+        "The rain has stopped." => WeatherKind::Rain,
+        "Weather effects will dispell on warp/refresh" => return Some(None),
+        _ => return None,
+    }))
+}
+
+/// How close together one burst's effects arrive (they are sent in one go).
+const BURST: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// Ambient weather for a map's climate (its sky profile's name) at `unix_secs`: what is on
 /// and how strongly.
 pub fn ambient(climate: &str, map: &str, unix_secs: u64) -> Vec<(WeatherKind, f32)> {
@@ -76,6 +96,8 @@ fn showering(map: &str, unix_secs: u64) -> bool {
 pub struct Weather {
     /// The server's weather on this map.
     server: Vec<WeatherKind>,
+    /// When its last weather effect came (a later one past `BURST` starts a new set).
+    server_at: Option<std::time::Instant>,
     /// `--weather snow,fog`: shown on every map (captures).
     forced: Vec<WeatherKind>,
     /// Each kind's strength as shown, eased toward what is wanted.
@@ -93,14 +115,32 @@ impl Weather {
     /// A new map: the server says again what its weather is.
     pub fn clear_server(&mut self) {
         self.server.clear();
+        self.server_at = None;
         self.shown.clear();
     }
 
-    pub fn server_on(&mut self, kind: WeatherKind) {
+    /// One of the server's weather effects, come `now`: part of the set still on.
+    pub fn server_on(&mut self, kind: WeatherKind, now: std::time::Instant) {
+        if self.server_at.is_none_or(|at| now.duration_since(at) > BURST) && !self.server.is_empty() {
+            tracing::info!(was = ?self.server, "weather set changes");
+            self.server.clear();
+        }
+        self.server_at = Some(now);
         if !self.server.contains(&kind) {
             tracing::info!(?kind, "weather");
             self.server.push(kind);
         }
+    }
+
+    /// A server message, come `now`: clears what it says has stopped, unless a burst just
+    /// said what is still on (clouds and clouds2 are both clouds here).
+    pub fn server_said(&mut self, text: &str, now: std::time::Instant) {
+        let Some(gone) = stopped(text) else { return };
+        if self.server_at.is_some_and(|at| now.duration_since(at) <= BURST) {
+            return;
+        }
+        tracing::info!(?gone, "weather stopped");
+        self.server.retain(|k| gone.is_some_and(|g| g != *k));
     }
 
     /// Eases the weather toward what is wanted and hands it to the renderer. `climate` is the
@@ -244,6 +284,31 @@ mod tests {
         assert_eq!(from_effect(516), Some(WeatherKind::Clouds));
         assert_eq!(from_effect(515), Some(WeatherKind::Fog));
         assert_eq!(from_effect(297), None, "fireworks stay effects");
+    }
+
+    #[test]
+    fn each_burst_is_all_the_servers_weather() {
+        let t0 = std::time::Instant::now();
+        let ms = |n| t0 + std::time::Duration::from_millis(n);
+        let mut w = Weather::default();
+        // @snow, then @sakura: the second burst holds both.
+        w.server_on(WeatherKind::Snow, ms(0));
+        w.server_on(WeatherKind::Snow, ms(5000));
+        w.server_on(WeatherKind::Petals, ms(5001));
+        assert_eq!(w.server, [WeatherKind::Snow, WeatherKind::Petals]);
+        // @sakura off: snow alone is sent again, then the message (which the burst overrules).
+        w.server_on(WeatherKind::Snow, ms(9000));
+        w.server_said("Cherry tree leaves no longer fall.", ms(9002));
+        assert_eq!(w.server, [WeatherKind::Snow]);
+        // @snow off: nothing is sent; the message clears it.
+        w.server_said("Snow has stopped falling.", ms(12000));
+        assert!(w.server.is_empty());
+        w.server_on(WeatherKind::Fog, ms(15000));
+        w.server_on(WeatherKind::Leaves, ms(15000));
+        w.server_said("Weather effects will dispell on warp/refresh", ms(20000));
+        assert!(w.server.is_empty());
+        // Chat that merely says so (with a speaker) is no message from the server.
+        assert_eq!(stopped("Hayate : Snow has stopped falling."), None);
     }
 
     #[test]

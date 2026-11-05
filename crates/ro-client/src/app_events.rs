@@ -194,6 +194,10 @@ impl App {
                     (ro_net::ChatKind::Public, None) => _ = self.shouts.insert(self.account_id, (text.clone(), 0.0, true)),
                     _ => {}
                 }
+                // The server's word that weather stopped (@snow again, @clearweather).
+                if from.is_none() {
+                    self.weather.server_said(&text, std::time::Instant::now());
+                }
                 self.hud.push_chat_coloured(kind, text, color);
             }
             Menu(menu) => {
@@ -2265,10 +2269,10 @@ impl App {
             }
             // EF_COLORPAPER: the wedding ceremony's paper shower.
             ScriptEffect { id, effect: 347 } | Wedding(id) => self.wedding_fx(id),
-            // The map's weather (sent on entering it): it lasts until the map changes.
+            // The map's weather (sent on entering it, and all again whenever it changes).
             ScriptEffect { effect, .. } if weather::from_effect(effect).is_some() => {
                 if let Some(kind) = weather::from_effect(effect) {
-                    self.weather.server_on(kind);
+                    self.weather.server_on(kind, std::time::Instant::now());
                 }
             }
             ScriptEffect { id, effect } => {
