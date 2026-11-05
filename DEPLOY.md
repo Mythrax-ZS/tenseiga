@@ -442,9 +442,14 @@ The log is `files/tenseiga.log`.
 
 ### 2.4 If something goes wrong
 
-The client logs to its console. On Windows it has none, so start it from a command prompt
-with `tenseiga.exe > tenseiga.log 2>&1` to capture the log. On Linux, start the AppImage from a
-terminal. On Android it's `files/tenseiga.log`.
+The client writes its log to `tenseiga.log`, started afresh each run:
+
+- **Windows:** beside `tenseiga.exe` (the folder that holds `config\`).
+- **Linux / Steam Deck:** `~/.config/tenseiga/tenseiga.log`, beside `local.toml`. Started from a
+  terminal, the AppImage also prints it there.
+- **Android:** `files/tenseiga.log`.
+
+A start-up error also shows in a message box on Windows.
 
 | What you see | Likely cause |
 |---|---|

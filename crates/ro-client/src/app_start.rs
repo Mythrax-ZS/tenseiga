@@ -3,10 +3,45 @@
 use super::*;
 
 pub(crate) fn run() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+    use tracing_subscriber::prelude::*;
+    // The console, and a file: a release build on Windows is a windowed app with no console.
+    let config = std::env::var_os("ROCLIENT_CONFIG").map(PathBuf::from);
+    let path = log_path(config.as_deref());
+    let path = std::path::absolute(&path).unwrap_or(path);
+    let (file, error) = match std::fs::File::create(&path) {
+        Ok(f) => (Some(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(std::sync::Mutex::new(f))), None),
+        Err(e) => (None, Some(e)),
+    };
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(file)
         .init();
+    match error {
+        None => tracing::info!(path = %path.display(), "log file"),
+        Some(e) => tracing::warn!(path = %path.display(), "can't write the log file: {e}"),
+    }
+    // Panics reach the file too, then the usual message (and backtrace) on the console.
+    let console = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("panic: {info}");
+        console(info);
+    }));
     start(None)
+}
+
+/// tenseiga.log in the working folder (the one holding config\local.toml, see main.rs), or
+/// beside the config ROCLIENT_CONFIG names (the AppImage's ~/.config/tenseiga). A second
+/// client on another config (config\local2.toml) logs to tenseiga-local2.log, not over the first.
+fn log_path(config: Option<&std::path::Path>) -> PathBuf {
+    let Some(config) = config else {
+        return PathBuf::from("tenseiga.log");
+    };
+    let name = match config.file_stem().and_then(|s| s.to_str()) {
+        Some("local") | None => "tenseiga.log".to_string(),
+        Some(stem) => format!("tenseiga-{stem}.log"),
+    };
+    config.with_file_name(name)
 }
 
 /// Loads the config and runs the client. Android hands over the event loop its activity made.
@@ -416,4 +451,18 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
     }
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod log_path_tests {
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_log_sits_beside_its_config() {
+        assert_eq!(super::log_path(None), PathBuf::from("tenseiga.log"), "the working folder by default");
+        let appimage = Path::new("/home/deck/.config/tenseiga/local.toml");
+        assert_eq!(super::log_path(Some(appimage)), Path::new("/home/deck/.config/tenseiga/tenseiga.log"));
+        let second = Path::new("config/local2.toml");
+        assert_eq!(super::log_path(Some(second)), Path::new("config/tenseiga-local2.log"), "a second client keeps its own log");
+    }
 }

@@ -30,10 +30,10 @@ fn find_home() {
     }
 }
 
-/// A start-up failure: said on the console, and in a message box, since a windowed app
-/// started by double-click has no console to say it on.
+/// A start-up failure: said in the log (console and tenseiga.log), and in a message box,
+/// since a windowed app started by double-click has no console to say it on.
 fn fatal(msg: &str) {
-    eprintln!("Tenseiga could not start: {msg}");
+    tracing::error!("Tenseiga could not start: {msg}");
     #[cfg(windows)]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
