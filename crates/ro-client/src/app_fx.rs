@@ -8,14 +8,14 @@ impl App {
             self.quake(q);
         }
         // The skill's own sound, when the client has one.
-        if let (Some(a), Some(vfs), Some(name)) = (self.audio.as_ref(), self.vfs.as_ref(), self.skill_names.internal(skill)) {
+        if let (Some(a), Some(vfs), Some(name)) = (self.audio.as_ref(), self.vfs.as_deref(), self.skill_names.internal(skill)) {
             match a.skill_sound(name) {
                 Some(file) => a.play(vfs, &file),
                 None => tracing::debug!(skill, name, "no sound for skill"),
             }
         }
         let Some(pos) = pos else { return };
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
         match fx::skill_visual(skill) {
             Some(fx::Visual::Str(name)) => {
                 if let Some(asset) = self.fx.get(r, vfs, name) {
@@ -81,7 +81,7 @@ impl App {
 
     /// Earth spikes erupting in a wave from `from` toward `to` (Grimtooth).
     pub(crate) fn spike_line(&mut self, from: glam::Vec3, to: glam::Vec3) {
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
         let Some(tex) = self.fx.texture(r, vfs, "dustblast_stick.bmp") else { return };
         let reach = to - from;
         let count = ((reach.length() / ro_render::CELL) as u32).clamp(3, 12);
@@ -90,7 +90,7 @@ impl App {
     }
 
     pub(crate) fn proc_fx(&mut self, tex: &'static str, shape: ro_render::Shape, pos: glam::Vec3, color: [f32; 3], duration_ms: f32) {
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
         if let Some(tex) = self.fx.texture(r, vfs, tex) {
             r.procs.push(ro_render::ProcFx { tex, shape, pos, color, time_ms: 0.0, duration_ms });
         }
@@ -102,7 +102,7 @@ impl App {
         let Some(pos) = self.unit_pos(id) else { return };
         self.play_sound("effect\\wedding.wav");
         self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
         if let Some(tex) = self.fx.fx_texture(r, vfs, fx::FxTexture::Paper) {
             let shape = ro_render::Shape::Confetti { seed: self.spark_seed ^ id };
             r.procs.push(ro_render::ProcFx { tex, shape, pos, color: [1.0; 3], time_ms: 0.0, duration_ms: 6500.0 });
@@ -136,7 +136,7 @@ impl App {
         }
         self.burst_at.insert(src, now);
         let travel = (to - from).normalize_or_zero() * ro_render::CELL * 11.0;
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
         let Some(tex) = self.fx.fx_texture(r, vfs, fx::FxTexture::Streak) else { return };
         for solid in [true, false] {
             let shape = ro_render::Shape::Crescent { travel, solid };
@@ -151,7 +151,7 @@ impl App {
     /// Plays an STR effect; a non-zero `tag` loops it until `stop_fx(tag)`.
     /// A trap's model standing at `pos` (loaded once per model).
     pub(crate) fn trap_draws(&mut self, path: &'static str, pos: glam::Vec3) -> Vec<ro_render::ModelDraw> {
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return vec![] };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return vec![] };
         let model = self
             .trap_models
             .entry(path)
@@ -178,7 +178,7 @@ impl App {
     }
 
     pub(crate) fn play_fx_tagged(&mut self, name: &'static str, pos: glam::Vec3, tag: u32) {
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
         if let Some(asset) = self.fx.get(r, vfs, name) {
             r.effects.push(ro_render::Fx { asset, pos, time_ms: 0.0, looping: tag != 0, tag });
         }
@@ -265,7 +265,7 @@ impl App {
     /// EF_HIT1, the spark where a hit lands: four flecks of effect\pok3.tga flying out from a
     /// cell above the target for 300 ms (roBrowser's EffectTable: alpha 0.8, ends up to 2 cells off).
     pub(crate) fn hit_spark(&mut self, pos: glam::Vec3) {
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
         let Some(tex) = self.fx.texture(r, vfs, "pok3.tga") else { return };
         for _ in 0..4 {
             self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);

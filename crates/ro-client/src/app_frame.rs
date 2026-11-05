@@ -17,7 +17,8 @@ impl App {
         let dt = (now - self.last_tick).as_secs_f32() * 1000.0;
         self.last_tick = now;
         self.perf.frame(dt);
-        if self.front.is_none() {
+        // While a map loads the old world takes no controller input (see start_map_load).
+        if self.front.is_none() && self.map_load.is_none() {
             self.pad_tick(dt);
             self.feedback_tick(dt);
             self.touchpad_tick(el);
@@ -128,7 +129,7 @@ impl App {
                     // navi:map:x:y guides there; navigo walks to the next stop.
                     Some(("navi", spec)) => {
                         let f: Vec<&str> = spec.split(':').collect();
-                        self.navi.ensure_loaded(self.vfs.as_ref());
+                        self.navi.ensure_loaded(self.vfs.as_deref());
                         let cell = match (f.get(1).and_then(|x| x.parse().ok()), f.get(2).and_then(|y| y.parse().ok())) {
                             (Some(x), Some(y)) => Some((x, y)),
                             _ => None,
@@ -177,7 +178,7 @@ impl App {
                         None
                     }
                     Some(("bg", name)) => {
-                        self.battle.ensure_loaded(self.vfs.as_ref());
+                        self.battle.ensure_loaded(self.vfs.as_deref());
                         self.battle.open = true;
                         self.queued_commands.push(ro_net::Command::Bg(ro_net::BgRequest::Apply { kind: 1, name: name.to_string() }));
                         None
@@ -750,9 +751,17 @@ impl App {
         if let Some(a) = self.queued_action.take() {
             self.ui_action(a);
         }
-        let events: Vec<_> = self.net.as_ref().map(|(_, rx)| rx.try_iter().collect()).unwrap_or_default();
-        for e in events {
-            self.handle(e);
+        // Server events in order, stopping at one that needs a map loaded: it and the ones after
+        // it wait for the map loader (the connection keeps going on the net thread meanwhile).
+        self.poll_map_load();
+        let mut budget = 10_000; // what has arrived, not a stream that never ends
+        while self.map_load.is_none() && budget > 0 {
+            budget -= 1;
+            let Some(e) = self.net.as_ref().and_then(|(_, rx)| rx.try_recv().ok()) else { break };
+            match self.map_to_load(&e) {
+                Some(map) => self.start_map_load(&map, e),
+                None => self.handle(e),
+            }
         }
 
         // Chasing an out-of-reach target: attack again once close enough (or arrived).
@@ -969,7 +978,7 @@ impl App {
         if let Some(w) = self.world.as_ref() {
             let octant = (r.camera.yaw / std::f32::consts::FRAC_PI_4).round() as i32;
             // Aura textures: the level aura's as they are, custom auras' whitened to be tinted.
-            let auras = match self.vfs.as_ref() {
+            let auras = match self.vfs.as_deref() {
                 Some(vfs) => {
                     let mut set = |white: bool| {
                         let mut get = |n: &'static str| if white { self.fx.texture_white(r, vfs, n) } else { self.fx.texture(r, vfs, n) };
@@ -1010,7 +1019,7 @@ impl App {
                 m.fit_pose(r);
                 let a = m.update(dt, w, octant, 0);
                 // Attack, hurt and death frames carry their sounds in the ACT.
-                if let (Some(_), Some(audio), Some(vfs)) = (m.pose, self.audio.as_ref(), self.vfs.as_ref()) {
+                if let (Some(_), Some(audio), Some(vfs)) = (m.pose, self.audio.as_ref(), self.vfs.as_deref()) {
                     let from = if a.action == action && time > 0.0 && a.time_ms >= time { time } else { -1.0 };
                     if let Some(s) = r.actor_sound(&a, from) {
                         audio.play(vfs, &s);
@@ -1026,7 +1035,7 @@ impl App {
             }
             // The ground cursor: texture\grid.tga's corner marks, mint green and half opaque
             // (measured from the original), lying on the cell's corners.
-            if let (Some((x, y)), Some(vfs)) = (hover_cell, self.vfs.as_ref()) {
+            if let (Some((x, y)), Some(vfs)) = (hover_cell, self.vfs.as_deref()) {
                 if let Some(tex) = self.fx.texture(r, vfs, "data\\texture\\grid.tga") {
                     let (x0, z0) = (x as f32, y as f32);
                     let h = |dx: f32, dz: f32| w.floor_at((x0 + dx) * ro_render::CELL, (z0 + dz) * ro_render::CELL);
@@ -1037,7 +1046,7 @@ impl App {
             }
             // Ambient map effects (RSW emitters, EF_* ids): torches loop in place; bubbles and
             // fireflies fire again on each emitter's own timer while the player is near.
-            if let (Some(vfs), Some(p)) = (self.vfs.as_ref(), self.player.as_ref()) {
+            if let (Some(vfs), Some(p)) = (self.vfs.as_deref(), self.player.as_ref()) {
                 let me = p.actor.pos;
                 for e in &mut self.map_fx {
                     let near = e.pos.distance(me) < fx::MAP_FX_RANGE * ro_render::CELL;
@@ -1088,7 +1097,7 @@ impl App {
                     }
                 }
             }
-            if let (Some(name), true, Some(vfs), Some(p)) = (self.fx_test.filter(|n| !n.starts_with("skill:")), r.effects.is_empty(), self.vfs.as_ref(), self.player.as_ref()) {
+            if let (Some(name), true, Some(vfs), Some(p)) = (self.fx_test.filter(|n| !n.starts_with("skill:")), r.effects.is_empty(), self.vfs.as_deref(), self.player.as_ref()) {
                 if let Some(asset) = self.fx.get(r, vfs, name) {
                     r.effects.push(ro_render::Fx { asset, pos: p.actor.pos, time_ms: 0.0, looping: false, tag: 0 });
                 }
@@ -1117,7 +1126,7 @@ impl App {
             self.sprite_fx.retain(|(_, left)| *left > 0.0);
             r.actors.extend(self.sprite_fx.iter().map(|(a, _)| a.clone()));
             // Emotes over heads (sprite\이팩트\emotion, one action per ET_* id).
-            if let (false, Some(vfs)) = (self.emotes.is_empty(), self.vfs.as_ref()) {
+            if let (false, Some(vfs)) = (self.emotes.is_empty(), self.vfs.as_deref()) {
                 if let Some(sheet) = self.fx.sprite(r, vfs, "emotion") {
                     for (id, (kind, t)) in &mut self.emotes {
                         *t += dt;
@@ -1319,7 +1328,7 @@ impl App {
             let mut answer = None;
             let mut ui_action = None;
             if self.skin.is_none() && self.settings.classic_ui {
-                if let Some(vfs) = self.vfs.as_ref() {
+                if let Some(vfs) = self.vfs.as_deref() {
                     self.skin = Some(classic::Skin::load(&self.egui_ctx, vfs));
                 }
             }
@@ -1413,6 +1422,7 @@ impl App {
                     p.vram.map_or("GPU memory -".to_string(), |(used, reserved)| format!("GPU memory {} MB ({} MB reserved)", used >> 20, reserved >> 20)),
                 ]
             });
+            let load_progress = self.map_load.as_ref().map(MapLoad::progress);
             let out = self.egui_ctx.run_ui(input, |ui| {
                 if let Some(lines) = &perf_lines {
                     self.perf.show(ui.ctx(), lines);
@@ -1431,8 +1441,10 @@ impl App {
                     s.title(ui.ctx());
                 }
                 // Loading screen over a map being entered (fades once it is in).
-                if let (Some(s), None) = (self.splash.as_mut(), self.front.as_ref()) {
-                    if s.loading(ui.ctx(), self.world.is_some() && self.player.is_some()) {
+                // From character select too: the screens give way once the map is in.
+                let progress = load_progress;
+                if let (Some(s), true) = (self.splash.as_mut(), self.front.is_none() || progress.is_some()) {
+                    if s.loading(ui.ctx(), progress.is_none() && self.world.is_some() && self.player.is_some(), progress.unwrap_or(1.0)) {
                         return;
                     }
                 }
@@ -1440,7 +1452,7 @@ impl App {
                 if let Some(front) = self.front.as_mut() {
                     let tables = &self.look_tables;
                     let accessory = |v: u16| tables.accessory(v as u32).map(str::to_string);
-                    let fctx = screens::Ctx { vfs: self.vfs.as_ref(), job_title: &job_title, job_sprite: &job_sprite, accessory: &accessory };
+                    let fctx = screens::Ctx { vfs: self.vfs.as_deref(), job_title: &job_title, job_sprite: &job_sprite, accessory: &accessory };
                     front_action = front.show(ui.ctx(), &fctx);
                     return;
                 }
@@ -1453,7 +1465,7 @@ impl App {
                 // Links in NPC dialogs: <NAVI> plans the route in the Navigation window, as the original.
                 match self.hud.dialog_link.take() {
                     Some(npcmarkup::Action::Navi { map, x, y }) => {
-                        self.navi.ensure_loaded(self.vfs.as_ref());
+                        self.navi.ensure_loaded(self.vfs.as_deref());
                         let label = self.navi.map_name(&map).map_or_else(|| format!("{map} {x}, {y}"), |n| format!("{n} {x}, {y}"));
                         self.navi.go(&map, Some((x, y)), label);
                     }
@@ -1461,7 +1473,7 @@ impl App {
                     Some(npcmarkup::Action::Item(link)) => self.hud.clicked_link = Some(link),
                     Some(npcmarkup::Action::Tip(_)) | None => {}
                 }
-                if let (Some(link), Some(vfs)) = (self.hud.clicked_link.take(), self.vfs.as_ref()) {
+                if let (Some(link), Some(vfs)) = (self.hud.clicked_link.take(), self.vfs.as_deref()) {
                     self.item_info.show_item(&self.egui_ctx, vfs, self.item_db.as_ref(), link.id, link.refine, link.cards);
                 }
                 if let (true, Some(map), Some(me)) = (self.settings.minimap, self.minimap.as_ref(), me) {
@@ -1473,10 +1485,10 @@ impl App {
                         hud::show_minimap(ui.ctx(), map, &map_name, me, &dots, &marks);
                     }
                 }
-                if let Some(vfs) = self.vfs.as_ref() {
+                if let Some(vfs) = self.vfs.as_deref() {
                     self.buffs.show(ui.ctx(), vfs, if self.settings.minimap && self.minimap.is_some() { 270.0 } else { 60.0 });
                 }
-                if let Some(vfs) = self.vfs.as_ref() {
+                if let Some(vfs) = self.vfs.as_deref() {
                     let ppp = ui.ctx().pixels_per_point();
                     let painter = ui.ctx().layer_painter(egui::LayerId::background());
                     for (p, mark, color) in &quest_marks {
@@ -1487,7 +1499,7 @@ impl App {
                     }
                 }
                 if let Some((id, refine, cards)) = self.item_info.show_viewing(ui.ctx(), self.item_db.as_ref(), &self.icons) {
-                    if let Some(vfs) = self.vfs.as_ref() {
+                    if let Some(vfs) = self.vfs.as_deref() {
                         self.item_info.show_item(ui.ctx(), vfs, self.item_db.as_ref(), id, refine, cards);
                     }
                 }
@@ -1586,7 +1598,7 @@ impl App {
                 }
                 {
                     let base = self.portrait.as_ref().map(|p| p.0.clone());
-                    match self.stylist.show(ui.ctx(), self.vfs.as_ref(), base) {
+                    match self.stylist.show(ui.ctx(), self.vfs.as_deref(), base) {
                         Some(Some(o)) => self.queued_commands.push(ro_net::Command::Style(ro_net::StyleRequest::Buy { hair_color: o.hair_color, hair: o.hair, clothes_color: o.clothes_color })),
                         Some(None) => self.queued_commands.push(ro_net::Command::Style(ro_net::StyleRequest::Close)),
                         None => {}
@@ -1629,7 +1641,7 @@ impl App {
                 if self.key_win.show(ui.ctx(), &mut self.settings.keys) {
                     self.settings.save();
                 }
-                if let Some(line) = self.emote_win.show(ui.ctx(), self.vfs.as_ref(), &mut self.settings.macros, &mut macros_changed) {
+                if let Some(line) = self.emote_win.show(ui.ctx(), self.vfs.as_deref(), &mut self.settings.macros, &mut macros_changed) {
                     self.queued_chat.push(line);
                 }
                 if macros_changed {
@@ -1683,14 +1695,14 @@ impl App {
                     self.queued_commands.push(ro_net::Command::Progress(req));
                 }
                 if self.quests.open {
-                    self.navi.ensure_loaded(self.vfs.as_ref());
+                    self.navi.ensure_loaded(self.vfs.as_deref());
                 }
                 let navi_names = &self.navi;
                 if let Some((quest, active)) = self.quests.show(ui.ctx(), &|m| navi_names.map_name(m).map(str::to_string)) {
                     self.queued_commands.push(ro_net::Command::QuestActive { quest, active });
                 }
                 if let Some((map, cell, label)) = self.quests.navigate.take() {
-                    self.navi.ensure_loaded(self.vfs.as_ref());
+                    self.navi.ensure_loaded(self.vfs.as_deref());
                     self.navi.go(&map, cell, label);
                 }
                 if self.esc_menu {
@@ -1912,7 +1924,7 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
                     let remember = self.front.as_ref().is_some_and(|f| f.remember);
                     let user = self.front.as_ref().map(|f| f.user().to_string()).unwrap_or_default();
                     self.front = Some(screens::Front::new(user, remember));
-                    if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_ref()) {
+                    if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_deref()) {
                         a.title(v);
                     }
                     self.net = Some(ro_net::spawn_session(self.session.clone()));

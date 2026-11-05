@@ -199,6 +199,12 @@ impl Upscaler {
 
     /// `apply` over many textures, spread across the CPU's cores.
     pub fn apply_all(&self, items: Vec<(AssetClass, String, Option<Rgba>)>) -> Vec<Option<Rgba>> {
+        self.apply_all_counted(items, &|| {})
+    }
+
+    /// `apply_all`, calling `each` as every item is done (from the worker threads; for a
+    /// progress bar).
+    pub fn apply_all_counted(&self, items: Vec<(AssetClass, String, Option<Rgba>)>, each: &(dyn Fn() + Sync)) -> Vec<Option<Rgba>> {
         if self.settings.kernel().is_none() {
             return items.into_iter().map(|(_, _, img)| img).collect();
         }
@@ -212,7 +218,15 @@ impl Upscaler {
             let handles: Vec<_> = slots
                 .chunks_mut(chunk)
                 .map(|part| {
-                    scope.spawn(move || part.iter_mut().map(|s| s.take().and_then(|(class, path, img)| img.map(|i| self.apply(class, &path, i)))).collect::<Vec<_>>())
+                    scope.spawn(move || {
+                        part.iter_mut()
+                            .map(|s| {
+                                let out = s.take().and_then(|(class, path, img)| img.map(|i| self.apply(class, &path, i)));
+                                each();
+                                out
+                            })
+                            .collect::<Vec<_>>()
+                    })
                 })
                 .collect();
             for h in handles {

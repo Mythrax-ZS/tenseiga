@@ -64,7 +64,7 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         Some(e) => e,
         None => EventLoop::new()?,
     };
-    let vfs = open_vfs(&cfg)?;
+    let vfs = open_vfs(&cfg)?.map(Arc::new);
     let cell = |s: String| s.split_once(',').and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?)));
     // Online unless --offline (or no game data to render with).
     // Scripted and test runs (or `auto_login = true`) log straight in with the configured
@@ -313,6 +313,8 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         last_tick: std::time::Instant::now(),
         focused: true,
         minimised: false,
+        map_load: None,
+        preloaded: None,
         capture: arg("--capture").map(|p| {
             let (w, h) = arg("--size")
                 .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))))
@@ -344,11 +346,11 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
     };
     // Interface textures loaded from here on follow the saved upscaling settings.
     uitex::set_upscaler(ro_render::Upscaler::new(app.settings.upscale.clone()));
-    app.class_names = app.vfs.as_ref().map(load_class_names).unwrap_or_default();
-    app.pet_talk = app.vfs.as_ref().map(pettalk::PetTalk::load).unwrap_or_default();
-    app.books = app.vfs.as_ref().map(book::Books::load).unwrap_or_default();
+    app.class_names = app.vfs.as_deref().map(load_class_names).unwrap_or_default();
+    app.pet_talk = app.vfs.as_deref().map(pettalk::PetTalk::load).unwrap_or_default();
+    app.books = app.vfs.as_deref().map(book::Books::load).unwrap_or_default();
     app.guild.client_dir = app.client_dir.clone();
-    app.hat_files = app.vfs.as_ref().map(fx::hat_effects).unwrap_or_default();
+    app.hat_files = app.vfs.as_deref().map(fx::hat_effects).unwrap_or_default();
     app.ui_scale = app.settings.ui_scale;
     if args.iter().any(|a| matches!(a.as_str(), "--front-login" | "--front-create" | "--front-make" | "--front-start" | "--front-rename" | "--front-move" | "--front-pin")) {
         app.queued_commands.push(ro_net::Command::Login { user: cfg_user.clone(), pass: cfg_pass.clone() });

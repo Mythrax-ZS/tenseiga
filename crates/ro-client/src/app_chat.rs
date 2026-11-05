@@ -217,7 +217,7 @@ impl App {
             }
             // /navi map [x/y]: guide there, as the original client; /navi alone opens the window.
             if let Some(rest) = text.trim().strip_prefix("/navi") {
-                self.navi.ensure_loaded(self.vfs.as_ref());
+                self.navi.ensure_loaded(self.vfs.as_deref());
                 let mut parts = rest.split(|c: char| c == ' ' || c == '/' || c == ',').filter(|s| !s.is_empty());
                 match parts.next() {
                     Some(map) => {

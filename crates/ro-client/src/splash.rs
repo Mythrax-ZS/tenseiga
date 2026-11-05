@@ -15,8 +15,10 @@ pub struct Splash {
     title: Option<egui::TextureHandle>,
     grade: Option<egui::TextureHandle>,
     loading_names: Vec<String>,
-    /// The loading screen, and when it was first drawn.
-    loading: Option<(egui::TextureHandle, Option<f64>)>,
+    /// The loading screen, when it was first drawn, and when the map was in.
+    loading: Option<(egui::TextureHandle, Option<f64>, Option<f64>)>,
+    /// The bar as last drawn (it glides toward the loader's progress).
+    bar: f32,
     /// Why the map didn't load, shown on the loading screen (it then stays up).
     failed: Option<String>,
     started: Option<f64>,
@@ -44,7 +46,7 @@ fn cover(ctx: &egui::Context, tex: &egui::TextureHandle, alpha: f32) {
 impl Splash {
     pub fn new(ctx: &egui::Context, vfs: Option<&ro_vfs::Vfs>) -> Self {
         let Some(vfs) = vfs else {
-            return Self { title: None, grade: None, loading_names: vec![], loading: None, failed: None, started: None };
+            return Self { title: None, grade: None, loading_names: vec![], loading: None, bar: 0.0, failed: None, started: None };
         };
         // The original ships up to 36 loading screens; use whichever exist.
         let loading_names = (0..40).map(|i| format!("{UI}loading{i:02}.jpg")).filter(|p| vfs.read(p).ok().flatten().is_some()).collect();
@@ -53,6 +55,7 @@ impl Splash {
             grade: load(ctx, vfs, &format!("{UI}t_gamegrade.tga")),
             loading_names,
             loading: None,
+            bar: 0.0,
             failed: None,
             started: None,
         }
@@ -95,7 +98,8 @@ impl Splash {
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as usize);
         let path = &self.loading_names[seed % self.loading_names.len()];
         if let Some(tex) = load(ctx, vfs, path) {
-            self.loading = Some((tex, None));
+            self.loading = Some((tex, None, None));
+            self.bar = 0.0;
             self.failed = None;
         }
     }
@@ -105,20 +109,30 @@ impl Splash {
         self.failed = Some(why);
     }
 
-    /// Draws the loading screen (`done` once the map is in). Returns false once it has faded away.
-    pub fn loading(&mut self, ctx: &egui::Context, done: bool) -> bool {
+    /// Draws the loading screen (`done` once the map is in; `loaded`, 0..1, how far the map
+    /// loader is). Returns false once it has faded away.
+    pub fn loading(&mut self, ctx: &egui::Context, done: bool, loaded: f32) -> bool {
         // A map that failed to load is as done as it will get: fade, so the game can be used to leave.
         let done = done || self.failed.is_some();
-        let Some((tex, since)) = &mut self.loading else { return false };
+        let Some((tex, since, done_at)) = &mut self.loading else { return false };
         let now = ctx.input(|i| i.time);
-        // Timed from its first frame: the map loads in one go before anything is drawn, so a
-        // slow load (big texture packs) would otherwise use up the showing time unseen.
+        // Timed from its first frame (a map loaded on the frame loop is in before that).
         let since = *since.get_or_insert(now);
-        // The map loads in one go; the bar fills over the screen's minimum showing time.
-        let progress = if done { ((now - since) / 0.6) as f32 } else { 0.1 };
+        let done_at = if done { Some(*done_at.get_or_insert(now)) } else { None };
+        // The bar follows the loader; once the map is in it fills over the screen's minimum
+        // showing time (at once, after a slow load).
+        let following = 0.1 + 0.8 * loaded.clamp(0.0, 1.0);
+        let target = if done { following.max(((now - since) / 0.6) as f32) } else { following };
+        // Glide (about a tenth of a second behind) rather than jump between the loader's steps.
+        let dt = ctx.input(|i| i.stable_dt).min(0.1);
+        self.bar = (self.bar + (target - self.bar) * (dt * 12.0).min(1.0)).max(0.1);
+        let progress = self.bar;
         // Stay at least a moment so it doesn't just flash, then fade out once loaded.
-        let shown = now - since;
-        let alpha = if done && shown > 0.6 { 1.0 - ((shown - 0.6) / FADE_SECS) as f32 } else { 1.0 };
+        let fade_from = done_at.map(|d| d.max(since + 0.6));
+        let alpha = match fade_from {
+            Some(f) if now > f => 1.0 - ((now - f) / FADE_SECS) as f32,
+            _ => 1.0,
+        };
         if alpha <= 0.0 {
             self.loading = None;
             return false;

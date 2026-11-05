@@ -577,7 +577,7 @@ impl Scene {
         sampler: &wgpu::Sampler,
         lightmap_sampler: &wgpu::Sampler,
         mesh: &SceneMesh,
-        images: Vec<Option<Rgba>>,
+        textures: Vec<Vec<Rgba>>,
     ) -> Self {
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("scene"),
@@ -585,11 +585,10 @@ impl Scene {
             usage: wgpu::BufferUsages::VERTEX,
         });
         let lightmap = upload_texture(device, queue, &mesh.lightmap, false);
-        let fallback = Rgba { width: 1, height: 1, pixels: vec![255, 0, 255, 255] };
-        let textures = images
+        let textures = textures
             .into_iter()
-            .map(|img| {
-                let view = upload_texture(device, queue, img.as_ref().unwrap_or(&fallback), true);
+            .map(|levels| {
+                let view = upload_levels(device, queue, &levels);
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("scene texture"),
                     layout,
@@ -609,12 +608,23 @@ impl Scene {
 /// Uploads an RGBA8 texture (gamma-space values; the shader blends like the original client),
 /// optionally with a CPU-generated mip chain.
 pub(crate) fn upload_texture(device: &wgpu::Device, queue: &wgpu::Queue, img: &Rgba, mips: bool) -> wgpu::TextureView {
+    upload_levels(device, queue, &mip_chain(img.clone(), mips))
+}
+
+/// `img` and, with `mips`, its smaller halves down to 1x1 (CPU work, for any thread).
+pub(crate) fn mip_chain(img: Rgba, mips: bool) -> Vec<Rgba> {
     let mut levels = vec![];
-    let mut cur = Some(Rgba { width: img.width, height: img.height, pixels: img.pixels.clone() });
+    let mut cur = Some(img);
     while let Some(l) = cur {
         cur = if mips { l.downsample() } else { None };
         levels.push(l);
     }
+    levels
+}
+
+/// Uploads a texture from its mip chain (`levels[0]` full size; see `mip_chain`).
+pub(crate) fn upload_levels(device: &wgpu::Device, queue: &wgpu::Queue, levels: &[Rgba]) -> wgpu::TextureView {
+    let img = &levels[0];
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("texture"),
         size: wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 },
