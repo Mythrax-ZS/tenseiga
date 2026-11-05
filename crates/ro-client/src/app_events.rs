@@ -75,7 +75,7 @@ impl App {
                     let mut f = screens::Front::new(user, front.remember);
                     f.event(&LoginFailed(format!("Disconnected: {reason}")));
                     self.front = Some(f);
-                    if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_ref()) {
+                    if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_deref()) {
                         a.title(v);
                     }
                     self.net = Some(ro_net::spawn_session(self.session.clone()));
@@ -414,7 +414,7 @@ impl App {
             ClanInfo(info) => self.clan.info = Some(info),
             ClanOnline(on, max) => self.clan.online = Some((on, max)),
             Navigate { map, x, y } => {
-                self.navi.ensure_loaded(self.vfs.as_ref());
+                self.navi.ensure_loaded(self.vfs.as_deref());
                 let cell = (x > 0 && y > 0).then_some((x, y));
                 let label = match cell { Some((x, y)) => format!("{map} ({x}, {y})"), None => map.clone() };
                 self.navi.go(&map, cell, label);
@@ -704,7 +704,7 @@ impl App {
                 }
             }
             UiOpen { kind: 7, data } => {
-                if let Some(vfs) = self.vfs.as_ref() {
+                if let Some(vfs) = self.vfs.as_deref() {
                     self.progress.load_art(&self.egui_ctx, vfs);
                 }
                 self.progress.attendance = Some(data);
@@ -742,7 +742,7 @@ impl App {
             }
             CashShop { cash, kafra } => {
                 self.stores.cash = Some((cash, kafra));
-                if let Some(vfs) = self.vfs.as_ref() {
+                if let Some(vfs) = self.vfs.as_deref() {
                     self.stores.load_cash_art(&self.egui_ctx, vfs);
                 }
                 // The server sends the item list once per login.
@@ -1270,7 +1270,7 @@ impl App {
                         let pos = glam::Vec3::new(x, w.floor_at(x, z), z);
                         self.play_fx_tagged(glow, pos, f.id);
                         self.play_fx_tagged(pillar, pos, f.id);
-                        if let (Some(audio), Some(vfs)) = (self.audio.as_ref(), self.vfs.as_ref()) {
+                        if let (Some(audio), Some(vfs)) = (self.audio.as_ref(), self.vfs.as_deref()) {
                             audio.play(vfs, sound);
                         }
                     }
@@ -1366,7 +1366,7 @@ impl App {
                 if c.ms > 0 {
                     self.casts.insert(c.src, (0.0, c.ms as f32));
                     // The magic circle under the caster while chanting.
-                    if let (Some(pos), Some(r), Some(vfs)) = (self.unit_pos(c.src), self.renderer.as_mut(), self.vfs.as_ref()) {
+                    if let (Some(pos), Some(r), Some(vfs)) = (self.unit_pos(c.src), self.renderer.as_mut(), self.vfs.as_deref()) {
                         if let Some(tex) = self.fx.texture(r, vfs, "magic_target.tga") {
                             let shape = ro_render::Shape::Disc { radius: 1.6, spin: 0.25 };
                             r.procs.push(ro_render::ProcFx { tex, shape, pos, color: [1.0, 1.0, 1.0], time_ms: 0.0, duration_ms: c.ms as f32 });
@@ -1812,13 +1812,13 @@ impl App {
             Sound { name, act } => {
                 // 0 plays once, 1 loops (played once here), 2 stops.
                 if act != 2 {
-                    if let (Some(a), Some(v)) = (self.audio.as_ref(), self.vfs.as_ref()) {
+                    if let (Some(a), Some(v)) = (self.audio.as_ref(), self.vfs.as_deref()) {
                         a.play(v, &name);
                     }
                 }
             }
             Bgm(name) => {
-                if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_ref()) {
+                if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_deref()) {
                     a.play_bgm(v, &name);
                 }
             }
@@ -1877,7 +1877,7 @@ impl App {
             RemoveEffect { id, effect } => {
                 // removespecialeffect: stop that effect where it plays on the unit.
                 if let (Some(name), Some(pos)) = (fx::script_effect(effect), self.unit_pos(id)) {
-                    if let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) {
+                    if let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) {
                         if let Some(asset) = self.fx.get(r, vfs, name) {
                             r.effects.retain(|e| e.asset != asset || e.pos.distance(pos) > ro_render::CELL);
                         }
@@ -2052,7 +2052,7 @@ impl App {
             }
             Reputation(list) => self.reputation.points.extend(list),
             ReputationOpen => {
-                self.reputation.load(self.vfs.as_ref());
+                self.reputation.load(self.vfs.as_deref());
                 self.reputation.open = true;
             }
             Config { kind, on } => self.game_opts.config(kind, on),
@@ -2104,8 +2104,8 @@ impl App {
                 self.stylist.open(hair, color, 0);
                 self.stylist.dressing = true;
             }
-            ReformOpen(tool) => self.reform.open(self.vfs.as_ref(), tool),
-            LapineOpen { upgrade, trigger } => self.lapine.open(self.vfs.as_ref(), upgrade, trigger),
+            ReformOpen(tool) => self.reform.open(self.vfs.as_deref(), tool),
+            LapineOpen { upgrade, trigger } => self.lapine.open(self.vfs.as_deref(), upgrade, trigger),
             LapineResult { upgrade, result } => {
                 if let Some(a) = self.lapine.result(upgrade, result) {
                     self.lapine_action(a);
@@ -2119,7 +2119,7 @@ impl App {
                 }
             }
             ReformResult { result, .. } => self.reform.result(result == 0),
-            UiOpenV3 { kind: 10, data } => self.enchant.open(self.vfs.as_ref(), data),
+            UiOpenV3 { kind: 10, data } => self.enchant.open(self.vfs.as_deref(), data),
             UiOpenV3 { .. } => {}
             EnchantResult { msg, item } => {
                 if msg == 3857 && item != 0 {
@@ -2221,7 +2221,7 @@ impl App {
                 }
             }
             SpecialPopup(id) => {
-                let popup = self.vfs.as_ref().and_then(|v| v.read(r"System\spopup.lub").ok().flatten()).and_then(|d| ro_formats::lub::eval(&d).ok()).and_then(|c| {
+                let popup = self.vfs.as_deref().and_then(|v| v.read(r"System\spopup.lub").ok().flatten()).and_then(|d| ro_formats::lub::eval(&d).ok()).and_then(|c| {
                     let t = c.globals.get("popuptbl")?.clone();
                     let e = &c.entries(&t).iter().find(|(k, _)| k.as_number() == Some(id as f64))?.1;
                     let ui = c.field(e, "uitype").and_then(|v| v.as_number()).unwrap_or(0.0) as u8;

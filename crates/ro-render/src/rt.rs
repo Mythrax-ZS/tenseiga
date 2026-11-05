@@ -47,8 +47,15 @@ pub fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 /// The scene's acceleration structure and surface data, bound to the world, sprite and water
 /// shaders. `textures[i]` is the image used by `ranges[i]` of `vertices`.
 pub fn build(device: &wgpu::Device, queue: &wgpu::Queue, layout: &wgpu::BindGroupLayout, vertices: &[Vertex], ranges: &[std::ops::Range<u32>], textures: &[Option<&Rgba>]) -> wgpu::BindGroup {
-    let (positions, opaque_n, info, layers) = split(vertices, ranges, textures, device.limits().max_texture_array_layers as usize);
-    upload(device, queue, layout, positions, opaque_n, info, layers)
+    upload(device, queue, layout, split(vertices, ranges, textures, device.limits().max_texture_array_layers as usize))
+}
+
+/// The CPU side of `build` (see `split`), ready to upload.
+pub struct Geometry {
+    opaque: Vec<[f32; 3]>,
+    opaque_n: u32,
+    info: Vec<[f32; 4]>,
+    layers: Vec<u8>,
 }
 
 /// vec4s per triangle in the info buffer: (uv0, uv1), (uv2, layer or -1, 0), (colour, 0),
@@ -59,7 +66,7 @@ const INFO: usize = 4;
 /// cut-outs run the alpha test. Returns the positions, how many are opaque, each triangle's
 /// info (for the alpha test and for shading what a reflection hits) and the textures sampled
 /// down to MASK² RGBA layers; none is empty.
-fn split(vertices: &[Vertex], ranges: &[std::ops::Range<u32>], textures: &[Option<&Rgba>], max_layers: usize) -> (Vec<[f32; 3]>, u32, Vec<[f32; 4]>, Vec<u8>) {
+pub fn split(vertices: &[Vertex], ranges: &[std::ops::Range<u32>], textures: &[Option<&Rgba>], max_layers: usize) -> Geometry {
     let layer_bytes = (MASK * MASK * 4) as usize;
     let (mut opaque, mut cut, mut opaque_info, mut cut_info, mut layers) = (vec![], vec![], vec![], vec![], vec![]);
     for (range, img) in ranges.iter().zip(textures) {
@@ -94,7 +101,7 @@ fn split(vertices: &[Vertex], ranges: &[std::ops::Range<u32>], textures: &[Optio
     let mut info = vec![[(opaque_n / 3) as f32, 0.0, 0.0, 0.0]];
     info.extend(opaque_info);
     info.extend(cut_info);
-    (opaque, opaque_n, info, layers)
+    Geometry { opaque, opaque_n, info, layers }
 }
 
 /// `img` box-filtered to MASK² RGBA.
@@ -120,7 +127,8 @@ fn shrink(img: &Rgba) -> Vec<u8> {
     out
 }
 
-fn upload(device: &wgpu::Device, queue: &wgpu::Queue, layout: &wgpu::BindGroupLayout, opaque: Vec<[f32; 3]>, opaque_n: u32, info: Vec<[f32; 4]>, layers: Vec<u8>) -> wgpu::BindGroup {
+pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue, layout: &wgpu::BindGroupLayout, geometry: Geometry) -> wgpu::BindGroup {
+    let Geometry { opaque, opaque_n, info, layers } = geometry;
     let positions = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("rt positions"),
         contents: bytemuck::cast_slice(&opaque),
@@ -225,7 +233,7 @@ mod tests {
         // Left column see-through.
         let keyed = Rgba { width: 2, height: 2, pixels: (0..4).flat_map(|i| [9, 9, 9, if i % 2 == 0 { 0 } else { 255 }]).collect() };
         let vertices: Vec<Vertex> = [tri(1.0), tri(2.0), tri(3.0)].concat();
-        let (pos, opaque, info, layers) = split(&vertices, &[0..3, 3..6, 6..9], &[Some(&keyed), Some(&solid), None], 8);
+        let Geometry { opaque: pos, opaque_n: opaque, info, layers } = split(&vertices, &[0..3, 3..6, 6..9], &[Some(&keyed), Some(&solid), None], 8);
         assert_eq!(opaque, 6);
         assert_eq!(pos.len(), 9);
         assert_eq!(pos[6][2], 1.0, "the keyed triangle comes after the opaque ones");
@@ -237,6 +245,6 @@ mod tests {
         assert_eq!(layers.len(), 2 * (MASK * MASK * 4) as usize);
         assert_eq!((layers[3], layers[((MASK - 1) * 4 + 3) as usize]), (0, 255));
         // Past the layer limit a texture shades grey and counts as opaque.
-        assert_eq!(split(&vertices, &[0..3, 3..6, 6..9], &[Some(&keyed), Some(&solid), None], 0).1, 9);
+        assert_eq!(split(&vertices, &[0..3, 3..6, 6..9], &[Some(&keyed), Some(&solid), None], 0).opaque_n, 9);
     }
 }

@@ -15,8 +15,8 @@ pub struct Splash {
     title: Option<egui::TextureHandle>,
     grade: Option<egui::TextureHandle>,
     loading_names: Vec<String>,
-    /// The loading screen, and when it was first drawn.
-    loading: Option<(egui::TextureHandle, Option<f64>)>,
+    /// The loading screen, when it was first drawn, and when the map was in.
+    loading: Option<(egui::TextureHandle, Option<f64>, Option<f64>)>,
     /// Why the map didn't load, shown on the loading screen (it then stays up).
     failed: Option<String>,
     started: Option<f64>,
@@ -95,7 +95,7 @@ impl Splash {
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as usize);
         let path = &self.loading_names[seed % self.loading_names.len()];
         if let Some(tex) = load(ctx, vfs, path) {
-            self.loading = Some((tex, None));
+            self.loading = Some((tex, None, None));
             self.failed = None;
         }
     }
@@ -105,20 +105,26 @@ impl Splash {
         self.failed = Some(why);
     }
 
-    /// Draws the loading screen (`done` once the map is in). Returns false once it has faded away.
-    pub fn loading(&mut self, ctx: &egui::Context, done: bool) -> bool {
+    /// Draws the loading screen (`done` once the map is in; `loaded`, 0..1, how far the map
+    /// loader is). Returns false once it has faded away.
+    pub fn loading(&mut self, ctx: &egui::Context, done: bool, loaded: f32) -> bool {
         // A map that failed to load is as done as it will get: fade, so the game can be used to leave.
         let done = done || self.failed.is_some();
-        let Some((tex, since)) = &mut self.loading else { return false };
+        let Some((tex, since, done_at)) = &mut self.loading else { return false };
         let now = ctx.input(|i| i.time);
-        // Timed from its first frame: the map loads in one go before anything is drawn, so a
-        // slow load (big texture packs) would otherwise use up the showing time unseen.
+        // Timed from its first frame (a map loaded on the frame loop is in before that).
         let since = *since.get_or_insert(now);
-        // The map loads in one go; the bar fills over the screen's minimum showing time.
-        let progress = if done { ((now - since) / 0.6) as f32 } else { 0.1 };
+        let done_at = if done { Some(*done_at.get_or_insert(now)) } else { None };
+        // The bar follows the loader; once the map is in it fills over the screen's minimum
+        // showing time (at once, after a slow load).
+        let following = 0.1 + 0.8 * loaded.clamp(0.0, 1.0);
+        let progress = if done { following.max(((now - since) / 0.6) as f32) } else { following };
         // Stay at least a moment so it doesn't just flash, then fade out once loaded.
-        let shown = now - since;
-        let alpha = if done && shown > 0.6 { 1.0 - ((shown - 0.6) / FADE_SECS) as f32 } else { 1.0 };
+        let fade_from = done_at.map(|d| d.max(since + 0.6));
+        let alpha = match fade_from {
+            Some(f) if now > f => 1.0 - ((now - f) / FADE_SECS) as f32,
+            _ => 1.0,
+        };
         if alpha <= 0.0 {
             self.loading = None;
             return false;

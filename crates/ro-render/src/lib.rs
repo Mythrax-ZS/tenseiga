@@ -715,10 +715,27 @@ impl Renderer {
 
     /// Replaces the world. `images[i]` is `mesh.textures[i]` (None if missing).
     pub fn set_scene(&mut self, mesh: &SceneMesh, images: Vec<Option<Rgba>>, lighting: Lighting) {
+        let prepared = prepare_scene(mesh, images, self.rt_layers());
+        self.set_prepared_scene(mesh, prepared, lighting);
+    }
+
+    /// What `prepare_scene` needs to know of this device: its texture array layer limit when
+    /// it ray traces, None when it doesn't.
+    pub fn rt_layers(&self) -> Option<usize> {
+        self.rt_layout.as_ref().map(|_| self.device.limits().max_texture_array_layers as usize)
+    }
+
+    /// `set_scene` with its CPU work done beforehand (`prepare_scene`, e.g. on a loader thread):
+    /// what is left is the upload.
+    pub fn set_prepared_scene(&mut self, mesh: &SceneMesh, prepared: PreparedScene, lighting: Lighting) {
         self.ground = mesh.ground.clone();
         if let Some(layout) = &self.rt_layout {
-            let refs: Vec<Option<&Rgba>> = images.iter().map(Option::as_ref).collect();
-            self.rt_bind = Some(rt::build(&self.device, &self.queue, layout, &mesh.vertices, &mesh.ranges, &refs));
+            // Prepared for a device without ray tracing: split from the full-size textures.
+            let geometry = prepared.rt.unwrap_or_else(|| {
+                let refs: Vec<Option<&Rgba>> = prepared.textures.iter().map(|levels| levels.first()).collect();
+                rt::split(&mesh.vertices, &mesh.ranges, &refs, self.device.limits().max_texture_array_layers as usize)
+            });
+            self.rt_bind = Some(rt::upload(&self.device, &self.queue, layout, geometry));
         }
         self.scene = Some(scene::Scene::upload(
             &self.device,
@@ -727,7 +744,7 @@ impl Renderer {
             &self.sampler,
             &self.lightmap_sampler,
             mesh,
-            images,
+            prepared.textures,
         ));
         self.lighting = lighting;
         self.water = None;
@@ -1758,6 +1775,29 @@ fn globals_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, glo
     })
 }
 
+/// A map's textures and ray tracing geometry readied for `Renderer::set_prepared_scene`.
+pub struct PreparedScene {
+    /// Each texture's mip chain (a missing one is a magenta pixel).
+    textures: Vec<Vec<Rgba>>,
+    rt: Option<rt::Geometry>,
+}
+
+/// The CPU half of `Renderer::set_scene`, which needs no GPU and so can run on any thread:
+/// mip chains, and with `rt_layers` (`Renderer::rt_layers`) the ray tracing geometry.
+pub fn prepare_scene(mesh: &SceneMesh, images: Vec<Option<Rgba>>, rt_layers: Option<usize>) -> PreparedScene {
+    let rt = rt_layers.map(|max| {
+        let refs: Vec<Option<&Rgba>> = images.iter().map(Option::as_ref).collect();
+        rt::split(&mesh.vertices, &mesh.ranges, &refs, max)
+    });
+    PreparedScene { textures: mip_chains(images), rt }
+}
+
+/// Each texture's mip chain; a missing texture is a magenta pixel.
+fn mip_chains(images: Vec<Option<Rgba>>) -> Vec<Vec<Rgba>> {
+    let fallback = Rgba { width: 1, height: 1, pixels: vec![255, 0, 255, 255] };
+    images.into_iter().map(|img| scene::mip_chain(img.unwrap_or_else(|| fallback.clone()), true)).collect()
+}
+
 #[cfg(test)]
 mod flicker_tests {
     use super::PointLight;
@@ -1770,5 +1810,19 @@ mod flicker_tests {
         assert!(samples.iter().all(|f| (0.75..=1.25).contains(f)));
         assert!(samples.iter().any(|f| (f - 1.0).abs() > 0.1));
         assert!((0..50).all(|i| crystal.flicker(i as f32 * 0.07) == 1.0));
+    }
+}
+
+#[cfg(test)]
+mod prepare_tests {
+    use super::*;
+
+    #[test]
+    fn textures_get_their_mip_chains_and_missing_ones_a_stand_in() {
+        let img = Rgba { width: 4, height: 2, pixels: vec![200; 4 * 2 * 4] };
+        let chains = mip_chains(vec![Some(img), None]);
+        let sizes: Vec<Vec<(u32, u32)>> = chains.iter().map(|l| l.iter().map(|m| (m.width, m.height)).collect()).collect();
+        assert_eq!(sizes, [vec![(4, 2), (2, 1), (1, 1)], vec![(1, 1)]]);
+        assert_eq!(chains[1][0].pixels, [255, 0, 255, 255]);
     }
 }

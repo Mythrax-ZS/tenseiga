@@ -279,7 +279,8 @@ fn load_character(
 
 struct LoadedMap {
     mesh: ro_render::SceneMesh,
-    images: Vec<Option<ro_render::Rgba>>,
+    /// Textures with their mip chains, and the ray tracing geometry (ro_render::prepare_scene).
+    scene: ro_render::PreparedScene,
     lighting: ro_render::Lighting,
     /// Light sources (torches, lamps) in world space.
     lights: Vec<ro_render::PointLight>,
@@ -313,8 +314,29 @@ fn map_night(name: &str) -> bool {
     MAP_COPIES.iter().any(|(copy, _, night)| *night && name.eq_ignore_ascii_case(copy))
 }
 
-fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler) -> anyhow::Result<LoadedMap> {
+/// A map loading on its own thread: the event that asked for it (and every event after it)
+/// waits until it is in, so the handlers see it loaded as before.
+struct MapLoad {
+    /// The map's files (see map_files).
+    files: String,
+    event: ro_net::Event,
+    rx: std::sync::mpsc::Receiver<anyhow::Result<LoadedMap>>,
+    /// How far the loader is, in thousandths.
+    progress: Arc<std::sync::atomic::AtomicU32>,
+    started: std::time::Instant,
+}
+
+impl MapLoad {
+    fn progress(&self) -> f32 {
+        self.progress.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0
+    }
+}
+
+/// `progress` counts thousandths of the load as it goes (for the loading screen's bar).
+/// `rt_layers` is ro_render::Renderer::rt_layers, for the ray tracing geometry.
+fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler, rt_layers: Option<usize>, progress: &std::sync::atomic::AtomicU32) -> anyhow::Result<LoadedMap> {
     let started = std::time::Instant::now();
+    let step = |thousandths: u32| progress.store(thousandths, std::sync::atomic::Ordering::Relaxed);
     let read = |path: String| vfs.read(&path)?.with_context(|| format!("{path} not found"));
     let rsw = ro_formats::rsw::Rsw::parse(&read(format!("data\\{name}.rsw"))?)?;
     let gnd_name = if rsw.gnd.is_empty() { format!("{name}.gnd") } else { rsw.gnd.clone() };
@@ -328,7 +350,9 @@ fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler) -> anyhow::
     let mut models: std::collections::HashMap<String, Option<ro_formats::rsm::Rsm>> = Default::default();
     let mut builder = ro_render::SceneBuilder::new(&gnd);
     let mut failed = 0;
-    for inst in &rsw.models {
+    step(100);
+    for (i, inst) in rsw.models.iter().enumerate() {
+        step(100 + (400 * i / rsw.models.len().max(1)) as u32);
         let rsm = models.entry(inst.file.to_ascii_lowercase()).or_insert_with(|| {
             let path = format!("data\\model\\{}", inst.file);
             match vfs.read(&path).map(|d| d.map(|d| ro_formats::rsm::Rsm::parse(&d))) {
@@ -353,6 +377,7 @@ fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler) -> anyhow::
         }
     }
     let mesh = builder.finish();
+    step(500);
 
     let load_textures = |names: &[String]| -> Vec<Option<ro_render::Rgba>> {
         names
@@ -375,7 +400,12 @@ fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler) -> anyhow::
     };
     // Ground textures come first in the mesh's list, then the models'.
     let classes = (0..mesh.textures.len()).map(|i| if i < mesh.ground_textures { ro_render::AssetClass::Ground } else { ro_render::AssetClass::Model });
-    let images = up.apply_all(classes.zip(mesh.textures.iter().cloned()).zip(load_textures(&mesh.textures)).map(|((c, n), img)| (c, n, img)).collect());
+    let decoded = load_textures(&mesh.textures);
+    step(650);
+    let images = up.apply_all(classes.zip(mesh.textures.iter().cloned()).zip(decoded).map(|((c, n), img)| (c, n, img)).collect());
+    step(800);
+    let scene = ro_render::prepare_scene(&mesh, images, rt_layers);
+    step(900);
     // RSW 2.6+ moved the water into the GND (1.8+).
     let water = rsw.water.or(gnd.water).as_ref().map(|w| {
         let mesh = ro_render::WaterMesh::build(&gnd, w);
@@ -403,7 +433,7 @@ fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler) -> anyhow::
         })
         .collect();
     let effects = rsw.effects.iter().map(|e| (e.id, glam::Vec3::new(e.pos[0] + gnd.width as f32 * gnd.zoom / 2.0, -e.pos[1], e.pos[2] + gnd.height as f32 * gnd.zoom / 2.0), e.delay, e.params)).collect();
-    Ok(LoadedMap { mesh, images, water, lighting: ro_render::Lighting::from_rsw(&rsw.light), lights, effects })
+    Ok(LoadedMap { mesh, scene, water, lighting: ro_render::Lighting::from_rsw(&rsw.light), lights, effects })
 }
 
 fn default_ui_scale() -> f32 {
@@ -1041,7 +1071,8 @@ struct App {
     esc_menu: bool,
     /// Start-up splash, title art and loading screens (made once the window exists).
     splash: Option<splash::Splash>,
-    vfs: Option<ro_vfs::Vfs>,
+    /// Shared with the map loader thread.
+    vfs: Option<Arc<ro_vfs::Vfs>>,
     /// Offline preview map and cell (ignored once the server places us).
     map: String,
     at: (u16, u16),
@@ -1383,6 +1414,10 @@ struct App {
     /// When the current map became ready (for --capture-after).
     ready_at: Option<std::time::Instant>,
     last_tick: std::time::Instant,
+    /// A map loading on its own thread; server events wait until it is in.
+    map_load: Option<MapLoad>,
+    /// A map the loader finished (its files' name), for enter_map to use.
+    preloaded: Option<(String, anyhow::Result<LoadedMap>)>,
     /// The window has keyboard focus (off: Settings' background frame rate applies).
     focused: bool,
     /// The window is minimised: the game keeps ticking, slowly, and draws nothing.
@@ -1430,7 +1465,7 @@ impl App {
     /// Opens book `id` (its item id) at `page`, titled with the item's name.
     fn open_book(&mut self, id: u32, page: u32) {
         let title = self.item_db.as_ref().map_or_else(|| format!("Book {id}"), |db| db.name(id, true));
-        if let Some(vfs) = self.vfs.as_ref() {
+        if let Some(vfs) = self.vfs.as_deref() {
             if !self.books.open(vfs, id, page, title) {
                 self.hud.push_chat(ro_net::ChatKind::System, "This book cannot be read.".into());
             }
@@ -1439,19 +1474,26 @@ impl App {
 
     /// Loads a map into the renderer and remembers its ground for picking.
     fn enter_map(&mut self, name: &str) {
-        // A loading screen covers the map load (not behind the login screens or in captures).
-        if self.front.is_none() && (self.capture.is_none() || std::env::args().any(|a| a == "--front-start")) {
-            if let Some(s) = self.splash.as_mut() {
-                s.begin_loading(&self.egui_ctx, self.vfs.as_ref());
-            }
-        }
-        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) else { return };
         // The server's name for the map stays the world's; its files may be another map's.
         let server_name = name;
         let name = map_files(name);
-        match load_map(vfs, name, &ro_render::Upscaler::new(self.settings.upscale.clone())) {
+        // Loaded on the map loader thread (start_map_load), or here and now.
+        let loaded = match self.preloaded.take() {
+            Some((files, loaded)) if files == name => Some(loaded),
+            _ => None,
+        };
+        // A loading screen covers the map load (not behind the login screens or in captures).
+        if loaded.is_none() && self.front.is_none() && (self.capture.is_none() || std::env::args().any(|a| a == "--front-start")) {
+            if let Some(s) = self.splash.as_mut() {
+                s.begin_loading(&self.egui_ctx, self.vfs.as_deref());
+            }
+        }
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
+        let loaded = loaded.unwrap_or_else(|| load_map(vfs, name, &ro_render::Upscaler::new(self.settings.upscale.clone()), r.rt_layers(), &Default::default()));
+        let applying = std::time::Instant::now();
+        match loaded {
             Ok(map) => {
-                r.set_scene(&map.mesh, map.images, map.lighting);
+                r.set_prepared_scene(&map.mesh, map.scene, map.lighting);
                 let submerged = map.effects.iter().filter(|e| e.0 == 109).count() >= 40;
                 let sky = sky::for_map(vfs, name, &map.lighting, submerged);
                 let outdoors = sky.is_some();
@@ -1507,6 +1549,8 @@ impl App {
                 }
                 self.world = Some(World { name: server_name.to_string(), outdoors, ground: map.mesh, gat, room: None, submerged });
                 self.ready_at = Some(std::time::Instant::now());
+                // The part of a map load that stays on the frame loop (GPU uploads, effects).
+                tracing::info!(map = name, ms = applying.elapsed().as_millis() as u64, "map applied");
             }
             Err(e) => {
                 tracing::error!("map {name}: {e:#}");
@@ -1523,13 +1567,75 @@ impl App {
         }
     }
 
+    /// The map `event` takes us to, when it needs loading (as its handler would call enter_map).
+    fn map_to_load(&self, event: &ro_net::Event) -> Option<String> {
+        match event {
+            ro_net::Event::Entered { map, .. } => Some(map.clone()),
+            ro_net::Event::MapMove { map, .. } if self.world.as_ref().is_none_or(|w| w.name != *map) => Some(map.clone()),
+            _ => None,
+        }
+    }
+
+    /// Loads `map` on its own thread; `event` (which asked for it) is handled once it is in.
+    /// Until then the frame loop keeps drawing (the loading screen) and the old world takes no
+    /// input: the server already has us on the new map.
+    fn start_map_load(&mut self, map: &str, event: ro_net::Event) {
+        let Some(vfs) = self.vfs.clone() else {
+            self.handle(event);
+            return;
+        };
+        if self.capture.is_none() || std::env::args().any(|a| a == "--front-start") {
+            if let Some(s) = self.splash.as_mut() {
+                s.begin_loading(&self.egui_ctx, Some(&vfs));
+            }
+        }
+        // Walks, chases and held steering would go to the server in the old map's cells.
+        self.walk_goal = None;
+        self.hold_walk = None;
+        self.attack = None;
+        self.chasing = false;
+        let files = map_files(map).to_string();
+        let progress: Arc<std::sync::atomic::AtomicU32> = Default::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let up = ro_render::Upscaler::new(self.settings.upscale.clone());
+        let rt_layers = self.renderer.as_ref().and_then(|r| r.rt_layers());
+        let (name, counter) = (files.clone(), progress.clone());
+        let spawned = std::thread::Builder::new().name("map loader".into()).spawn(move || {
+            let _ = tx.send(load_map(&vfs, &name, &up, rt_layers, &counter));
+        });
+        if let Err(e) = spawned {
+            // No thread: load as before, on the frame loop.
+            tracing::warn!("map loader thread: {e}");
+            self.handle(event);
+            return;
+        }
+        tracing::debug!(map, "map loading");
+        self.map_load = Some(MapLoad { files, event, rx, progress, started: std::time::Instant::now() });
+    }
+
+    /// Once the loader is done, handles the event that asked for the map (enter_map then
+    /// takes the loaded map).
+    fn poll_map_load(&mut self) {
+        let Some(load) = self.map_load.as_ref() else { return };
+        let loaded = match load.rx.try_recv() {
+            Ok(loaded) => loaded,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(anyhow::anyhow!("the map loader stopped")),
+        };
+        let Some(load) = self.map_load.take() else { return };
+        tracing::info!(map = %load.files, ms = load.started.elapsed().as_millis() as u64, "map loaded in the background");
+        self.preloaded = Some((load.files, loaded));
+        self.handle(load.event);
+        self.preloaded = None;
+    }
+
     /// Actor template for a player look, cached so sheets upload once per look.
     fn player_actor(&mut self, look: &Look) -> Option<ro_render::Actor> {
         let key = format!("player:{}:{}:{}:{}:{}:{:?}", look.job, look.male, look.hair, look.hair_color, look.clothes_color, look.gear);
         if let Some(a) = self.sprites.get(&key) {
             return a.clone();
         }
-        let (r, vfs) = (self.renderer.as_mut()?, self.vfs.as_ref()?);
+        let (r, vfs) = (self.renderer.as_mut()?, self.vfs.as_deref()?);
         // Weapons arrive as item ids; their sprite class is the item's ClassNum (iteminfo).
         let mut resolved = look.clone();
         if let Some(info) = self.item_db.as_ref().and_then(|d| d.get(look.gear.weapon)) {
@@ -1560,7 +1666,7 @@ impl App {
         if let Some(a) = self.sprites.get(&key) {
             return a.clone();
         }
-        let (r, vfs) = (self.renderer.as_mut()?, self.vfs.as_ref()?);
+        let (r, vfs) = (self.renderer.as_mut()?, self.vfs.as_deref()?);
         // Classes the original draws as 3D models: the model replaces the body sprite.
         if models3d::is_model(&name) {
             let loaded = models3d::load(vfs, r, &name).inspect_err(|e| tracing::warn!(job, "3D model {name}: {e:#}")).ok().map(std::rc::Rc::new);
@@ -1646,7 +1752,7 @@ impl App {
         if self.portrait.as_ref().is_some_and(|p| p.0 == want) {
             return;
         }
-        let tex = self.vfs.as_ref().and_then(|v| preview::compose(v, &want)).map(|img| self.egui_ctx.load_texture("portrait", img, egui::TextureOptions::NEAREST));
+        let tex = self.vfs.as_deref().and_then(|v| preview::compose(v, &want)).map(|img| self.egui_ctx.load_texture("portrait", img, egui::TextureOptions::NEAREST));
         self.portrait = Some((want, tex));
     }
 
@@ -1866,7 +1972,7 @@ impl App {
         self.attack = None;
         self.dialog = None;
         self.esc_menu = false;
-        if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_ref()) {
+        if let (Some(a), Some(v)) = (self.audio.as_mut(), self.vfs.as_deref()) {
             a.title(v);
         }
     }
@@ -1992,7 +2098,7 @@ impl App {
         match a {
             UseItem(index) => {
                 let id = self.inventory.items.get(&index).map(|i| i.id);
-                self.packages.ensure_loaded(self.vfs.as_ref());
+                self.packages.ensure_loaded(self.vfs.as_deref());
                 match id {
                     // Book items open locally, as the original (no use request is sent).
                     Some(id) if self.books.is_book(id) => self.open_book(id, 1),
@@ -2040,7 +2146,7 @@ impl App {
                 }
             }
             ItemInfo { id, refine, cards } => {
-                if let Some(vfs) = self.vfs.as_ref() {
+                if let Some(vfs) = self.vfs.as_deref() {
                     self.item_info.show_item(&self.egui_ctx, vfs, self.item_db.as_ref(), id, refine, cards);
                 }
             }
@@ -2175,7 +2281,7 @@ impl App {
         if let Some(a) = self.sprites.get(&key) {
             return a.clone();
         }
-        let (r, vfs) = (self.renderer.as_mut()?, self.vfs.as_ref()?);
+        let (r, vfs) = (self.renderer.as_mut()?, self.vfs.as_deref()?);
         let base = format!("data\\sprite\\아이템\\{res}");
         let spr = vfs.read(&format!("{base}.spr")).ok().flatten().and_then(|d| ro_formats::spr::Spr::parse(&d).ok());
         let act = vfs.read(&format!("{base}.act")).ok().flatten().and_then(|d| ro_formats::act::Act::parse(&d).ok());
@@ -2200,7 +2306,7 @@ impl App {
 
     /// Loads icons for specific item ids (shops, trades, storage).
     fn load_icons_for(&mut self, ids: &[u32]) {
-        let (Some(db), Some(vfs)) = (self.item_db.as_ref(), self.vfs.as_ref()) else { return };
+        let (Some(db), Some(vfs)) = (self.item_db.as_ref(), self.vfs.as_deref()) else { return };
         for &id in ids {
             if self.icons.contains_key(&id) || !self.icons_tried.insert(id) {
                 continue;
@@ -2219,7 +2325,7 @@ impl App {
     fn load_icons(&mut self) {
         let ids: Vec<u32> = self.inventory.items.values().map(|i| i.id).collect();
         self.load_icons_for(&ids);
-        let (Some(db), Some(vfs)) = (self.item_db.as_ref(), self.vfs.as_ref()) else { return };
+        let (Some(db), Some(vfs)) = (self.item_db.as_ref(), self.vfs.as_deref()) else { return };
         let unid: Vec<u32> = self.inventory.items.values().filter(|i| !i.identified).map(|i| i.id).collect();
         for id in unid {
             if self.unid_icons.contains_key(&id) || !self.unid_tried.insert(id) {
@@ -2234,7 +2340,7 @@ impl App {
     }
 
     fn load_skill_icons(&mut self) {
-        let Some(vfs) = self.vfs.as_ref() else { return };
+        let Some(vfs) = self.vfs.as_deref() else { return };
         // Learned skills, and the rest of the job's tree (drawn greyed out).
         let mut wanted: Vec<(u16, String)> = self.skills.iter().map(|s| (s.id, s.name.clone())).collect();
         for (_, grid) in self.skill_tree.tabs(self.hud.status.job_id) {
@@ -2300,7 +2406,7 @@ impl App {
     }
 
     fn play_sound(&self, name: &str) {
-        if let (Some(a), Some(vfs)) = (self.audio.as_ref(), self.vfs.as_ref()) {
+        if let (Some(a), Some(vfs)) = (self.audio.as_ref(), self.vfs.as_deref()) {
             a.play(vfs, name);
         }
     }
@@ -2325,7 +2431,7 @@ impl App {
             "y" => self.progress.open = !self.progress.open,
             "clan" => self.clan.open = !self.clan.open,
             "repute" => {
-                self.reputation.load(self.vfs.as_ref());
+                self.reputation.load(self.vfs.as_deref());
                 self.reputation.open = !self.reputation.open;
             }
             "opts" => self.game_opts.open = !self.game_opts.open,
@@ -2334,11 +2440,11 @@ impl App {
             "rank" => self.send(ro_net::Command::Ranking(self.ranking.kind)),
             "roulette" => self.open_roulette(),
             "battle" => {
-                self.battle.ensure_loaded(self.vfs.as_ref());
+                self.battle.ensure_loaded(self.vfs.as_deref());
                 self.battle.open = !self.battle.open;
             }
             "navi" => {
-                self.navi.ensure_loaded(self.vfs.as_ref());
+                self.navi.ensure_loaded(self.vfs.as_deref());
                 self.navi.open = !self.navi.open;
             }
             "n" => {
@@ -2606,7 +2712,7 @@ impl App {
 
     /// Loads an NPC illustration into an egui texture.
     fn load_cutin(&self, image: &str, position: u8) -> Option<hud::Cutin> {
-        let vfs = self.vfs.as_ref()?;
+        let vfs = self.vfs.as_deref()?;
         let name = if image.contains('.') { image.to_string() } else { format!("{image}.bmp") };
         let path = format!("data\\texture\\유저인터페이스\\illust\\{name}");
         let data = vfs.read(&path).ok().flatten().or_else(|| {
@@ -2734,7 +2840,7 @@ impl ApplicationHandler for App {
             None,
         ));
         install_fallback_fonts(&self.egui_ctx);
-        if let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_ref()) {
+        if let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) {
             let path = r"data\texture\effect\ring_blue.tga";
             match vfs.read(path).ok().flatten().map(|d| ro_formats::image::decode(&d, path)) {
                 Some(Ok(img)) => r.set_warp_texture(&img),
@@ -2746,7 +2852,7 @@ impl ApplicationHandler for App {
 
         // Offline: show the preview map and character right away. Online waits for the server,
         // with the map as the login screen's backdrop.
-        self.splash = Some(splash::Splash::new(&self.egui_ctx, self.vfs.as_ref()));
+        self.splash = Some(splash::Splash::new(&self.egui_ctx, self.vfs.as_deref()));
         // Captures of the login screens time from start-up (no map loads behind them).
         if self.front.is_some() {
             self.ready_at = Some(std::time::Instant::now());
@@ -2841,7 +2947,8 @@ impl ApplicationHandler for App {
             }
         }
         // Login / character screens: the world takes no input.
-        let front_blocks = self.front.is_some() && matches!(event, WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } | WindowEvent::KeyboardInput { .. });
+        // So does the old world while the next map loads (start_map_load).
+        let front_blocks = (self.front.is_some() || self.map_load.is_some()) && matches!(event, WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } | WindowEvent::KeyboardInput { .. });
         let function_key = matches!(&event, WindowEvent::KeyboardInput { event: winit::event::KeyEvent { logical_key: winit::keyboard::Key::Named(k), .. }, .. } if hotkey_slot(*k).is_some() || matches!(*k, winit::keyboard::NamedKey::F10 | winit::keyboard::NamedKey::F11 | winit::keyboard::NamedKey::F12));
         let ui_used = ui_used && !function_key;
         // Arranging the interface: clicks and the wheel are for the layout, not the world.
