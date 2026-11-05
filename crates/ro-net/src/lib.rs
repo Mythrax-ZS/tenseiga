@@ -2436,8 +2436,10 @@ mod tests {
             title.extend(master);
             title.push(0);
             s.write_all(&packet(0x0afd, &title)).await.unwrap();
-            // Held open until the session ends.
-            let _ = s.read(&mut [0; 64]).await;
+            // Held open until the session ends: the client's load-end and keepalives arrive
+            // meanwhile, and closing on the first of them ended the session with an error.
+            let mut buf = [0; 64];
+            while matches!(s.read(&mut buf).await, Ok(1..)) {}
         });
         let zone = ZoneServer { char_id: 150_001, map: "prontera.gat".into(), addr };
         let map = enter_map(&zone, &auth()).await.unwrap();
