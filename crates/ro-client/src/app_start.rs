@@ -311,6 +311,8 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         models3d: Default::default(),
         ready_at: None,
         last_tick: std::time::Instant::now(),
+        focused: true,
+        minimised: false,
         capture: arg("--capture").map(|p| {
             let (w, h) = arg("--size")
                 .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))))

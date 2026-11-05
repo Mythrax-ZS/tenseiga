@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 /// are greyed out where it can't.
 pub static RAY_TRACING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The background frame rate choices (0: no cap).
+const BACKGROUND_FPS: [u32; 4] = [15, 30, 60, 0];
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -48,6 +51,8 @@ pub struct Settings {
     pub screenshot_ui: bool,
     /// The performance overlay (F10): frame rate, frame times, ping.
     pub perf_overlay: bool,
+    /// Frame rate cap while another window has focus (0: none). Minimised, nothing is drawn.
+    pub background_fps: u32,
     /// Borderless full screen (F11).
     pub fullscreen: bool,
     /// Experience gained from monsters in the chat (the original's "Experience message" chat
@@ -88,7 +93,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, hud_layout: Default::default(), keys: Default::default(), screen_shake: true, arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
+        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, background_fps: 30, hud_layout: Default::default(), keys: Default::default(), screen_shake: true, arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
     }
 }
 
@@ -272,6 +277,16 @@ impl Settings {
         ui.end_row();
         ui.label("Performance");
         ui.checkbox(&mut self.perf_overlay, "Frame rate, frame times and ping (F10)");
+        ui.end_row();
+        ui.label("In the background");
+        let fps_name = |fps: u32| if fps == 0 { "No frame rate cap".to_string() } else { format!("Up to {fps} fps") };
+        egui::ComboBox::from_id_salt("background_fps").selected_text(fps_name(self.background_fps)).show_ui(ui, |ui| {
+            for fps in BACKGROUND_FPS {
+                ui.selectable_value(&mut self.background_fps, fps, fps_name(fps));
+            }
+        })
+        .response
+        .on_hover_text("While another window has focus; less work for the CPU and GPU. Minimised, the game draws nothing.");
         ui.end_row();
         ui.label("Layout");
         ui.horizontal(|ui| {
