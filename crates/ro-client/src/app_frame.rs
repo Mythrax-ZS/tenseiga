@@ -146,6 +146,19 @@ impl App {
                         None
                     }
                     // bg:Name applies solo to a battleground; bgauto enters it when ready.
+                    // aim:SKILL_LEVEL_DX_DY: aim a skill with the pointer over the cell that far
+                    // from us (captures of the aiming preview).
+                    Some(("aim", spec)) => {
+                        let n: Vec<i32> = spec.split('_').filter_map(|v| v.parse().ok()).collect();
+                        if let (&[skill, level, dx, dy], Some(me)) = (&n[..], self.player.as_ref().map(|p| p.walker.cell)) {
+                            self.aiming = Some((skill as u16, level as u16));
+                            let at = ((me.0 + dx).max(0) as u16, (me.1 + dy).max(0) as u16);
+                            if let (Some(pos), Some(r)) = (self.cell_pos(at), self.renderer.as_ref()) {
+                                self.cursor = r.project(pos, r.size()).map(|p| (p.x as f64, p.y as f64));
+                            }
+                        }
+                        None
+                    }
                     Some(("walk", xy)) => {
                         if let Some((x, y)) = xy.split_once('_').and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?))) {
                             self.request_walk((x, y));
@@ -1044,6 +1057,29 @@ impl App {
                     let shape = ro_render::Shape::Cell { heights: [h(0.001, 0.001), h(0.999, 0.001), h(0.999, 0.999), h(0.001, 0.999)] };
                     let pos = glam::Vec3::new(x0 * ro_render::CELL, 0.0, z0 * ro_render::CELL);
                     r.auras.push(ro_render::ProcFx { tex, shape, pos, color: [0.106, 0.863, 0.686], time_ms: 0.0, duration_ms: f32::MAX });
+                }
+            }
+            // Aiming a ground skill: the cells it will cover, where it would land (under the
+            // mouse; with a controller, on the target or at our feet, as a press of A casts it).
+            let aimed = self.aiming.filter(|(s, _)| self.skills.iter().any(|k| k.id == *s && k.target & 2 != 0));
+            if let (Some((skill, level)), Some(me)) = (aimed, self.player.as_ref().map(|p| p.walker.cell)) {
+                let at = if self.pad.in_use() {
+                    Some(self.pad_target.and_then(|t| self.units.get(&t)).map_or(me, |m| m.walker.cell))
+                } else {
+                    hover_cell.map(|(x, y)| (x as i32, y as i32))
+                };
+                if let Some(footprint) = at.and_then(|at| skillarea::footprint(skill, level, me, at).map(|f| (at, f))) {
+                    let tex = *self.area_tex.get_or_insert_with(|| r.add_effect_texture(&skillscale::area_texture()));
+                    // Held at full strength (ProcFx fades by time_ms / duration_ms).
+                    let area = |pos, size| ro_render::ProcFx { tex, shape: ro_render::Shape::Area { size }, pos, color: [1.0, 0.72, 0.25], time_ms: 300.0, duration_ms: 1000.0 };
+                    let cell = |(x, y): (i32, i32)| (x >= 0 && y >= 0).then(|| cell_pos_in(w, (x as u16, y as u16))).flatten();
+                    match footprint {
+                        (at, skillarea::Footprint::Square(r_)) => {
+                            let side = (2 * r_ + 1) as f32;
+                            r.auras.extend(cell(at).map(|pos| area(pos, (side, side))));
+                        }
+                        (_, skillarea::Footprint::Cells(cells)) => r.auras.extend(cells.into_iter().filter_map(cell).map(|pos| area(pos, (1.0, 1.0)))),
+                    }
                 }
             }
             // Ambient map effects (RSW emitters, EF_* ids): torches loop in place; bubbles and

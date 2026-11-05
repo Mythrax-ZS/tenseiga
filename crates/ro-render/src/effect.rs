@@ -733,8 +733,8 @@ impl ProcFx {
             Shape::Area { size } => {
                 let (hx, hz) = (size.0 * CELL / 2.0, size.1 * CELL / 2.0);
                 let v = |x: f32, z: f32, u: f32, vv: f32| Vertex { pos: (self.pos + Vec3::new(x, 0.2, z)).into(), uv: [u, vv], color };
-                let (a, b, cc, d) = (v(-hx, -hz, 0.0, 0.0), v(hx, -hz, 1.0, 0.0), v(hx, hz, 1.0, 1.0), v(-hx, hz, 0.0, 1.0));
-                out.extend([a, b, cc, a, cc, d]);
+                // Over slopes and steps, not through them.
+                drape(out, [v(-hx, -hz, 0.0, 0.0), v(hx, -hz, 1.0, 0.0), v(hx, hz, 1.0, 1.0), v(-hx, hz, 0.0, 1.0)], ground, 0.2);
             }
         }
     }

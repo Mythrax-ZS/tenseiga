@@ -2,6 +2,8 @@
 
 mod audio;
 mod chatlog;
+mod skillarea;
+mod skillarea_db;
 mod book;
 mod captcha;
 mod memorial;
