@@ -274,6 +274,8 @@ pub struct Renderer {
     pub weather: Vec<WeatherLayer>,
     /// STR effects playing this frame; the client advances and removes them.
     pub effects: Vec<Fx>,
+    /// Heat haze over deserts and volcanoes by day (with the HD-2D look).
+    pub heat_haze: bool,
     /// Foliage swaying in the wind (0 still .. 1 lively); the weather makes it blow harder.
     pub foliage_sway: f32,
     /// A lightning flash lighting the map this frame (0 none .. about 1): the game sets it
@@ -733,6 +735,7 @@ impl Renderer {
             wetness: 0.0,
             lightning: 0.0,
             foliage_sway: 0.0,
+            heat_haze: true,
             effects: vec![],
             show_effects: true,
             effect_pipeline,
@@ -1162,6 +1165,22 @@ impl Renderer {
         }
         let dir = glam::Vec2::new(1.0, 0.35).normalize();
         [dir.x, dir.y, self.foliage_sway * gale, 0.0]
+    }
+
+    /// Heat haze now (0..1): over deserts and volcanoes, outdoors, by day; rain and snow cool
+    /// it off.
+    fn heat(&self) -> f32 {
+        let Some(profile) = self.sky_profile.as_ref() else { return 0.0 };
+        if !self.heat_haze || self.room.is_some() || self.underwater > 0.0 {
+            return 0.0;
+        }
+        let base = match profile.name {
+            "desert" => 1.0,
+            "volcanic" => 1.2,
+            _ => return 0.0,
+        };
+        let cooled = self.weather.iter().filter(|w| matches!(w.kind, WeatherKind::Rain | WeatherKind::Snow)).map(|w| w.strength).fold(0.0, f32::max);
+        base * (1.0 - self.night_t * 0.85) * (1.0 - cooled.clamp(0.0, 1.0))
     }
 
     /// How hard it rains on this map now (0..1): outdoors, with effects shown.
@@ -1800,6 +1819,7 @@ impl Renderer {
                 // brightest thing on screen (an aura, a spell) down the walls.
                 sun_uv: (outdoor_sky && sun.w > 0.0).then(|| [sun.x / sun.w * 0.5 + 0.5, 0.5 - sun.y / sun.w * 0.5]),
                 underwater: self.underwater,
+                heat: self.heat(),
                 time: self.started.elapsed().as_secs_f32(),
                 eye: cam.eye(),
                 inv_view_proj: vp.inverse(),

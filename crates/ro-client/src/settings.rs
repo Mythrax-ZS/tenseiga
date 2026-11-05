@@ -148,6 +148,8 @@ pub struct Visual {
     pub cloud_shadows: f32,
     /// Trees, grass and flowers swaying in the wind (0 still .. 1 lively).
     pub foliage_sway: f32,
+    /// The air shimmering over deserts and volcanoes by day.
+    pub heat_haze: bool,
 }
 
 impl Default for Visual {
@@ -165,6 +167,7 @@ impl Default for Visual {
             weather: Default::default(),
             cloud_shadows: 0.6,
             foliage_sway: 0.7,
+            heat_haze: true,
             warmth: p.warmth,
             saturation: p.saturation,
             contrast: p.contrast,
@@ -550,6 +553,9 @@ impl Settings {
         ui.end_row();
         ui.label("Swaying trees").on_hover_text("Trees, grass and flowers sway in the wind, harder in rain and storms");
         ui.add(egui::Slider::new(&mut v.foliage_sway, 0.0..=1.0));
+        ui.end_row();
+        ui.add_enabled_ui(v.hd2d, |ui| ui.label("Heat haze")).inner.on_hover_text("The air shimmers over deserts and volcanoes by day");
+        ui.add_enabled(v.hd2d, egui::Checkbox::without_text(&mut v.heat_haze));
         ui.end_row();
         section(ui, "Look");
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Vignette"));

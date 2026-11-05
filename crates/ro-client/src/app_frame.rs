@@ -1086,6 +1086,7 @@ impl App {
                 self.weather.update(dt, self.settings.visual.weather, &w.name, w.climate, r, vfs);
                 r.cloud_shadows = self.settings.visual.cloud_shadows;
                 r.foliage_sway = self.settings.visual.foliage_sway;
+                r.heat_haze = self.settings.visual.heat_haze;
                 // Fireworks (the fireworks mapflag): set off, and each bangs as it bursts.
                 let (launches, bangs) = self.weather.fireworks(dt, self.settings.visual.weather);
                 for launch in launches {
