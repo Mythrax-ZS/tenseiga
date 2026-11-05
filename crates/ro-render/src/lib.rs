@@ -272,6 +272,9 @@ pub struct Renderer {
     pub weather: Vec<WeatherLayer>,
     /// STR effects playing this frame; the client advances and removes them.
     pub effects: Vec<Fx>,
+    /// A lightning flash lighting the map this frame (0 none .. about 1): the game sets it
+    /// while a storm flashes. Outdoors only.
+    pub lightning: f32,
     /// How wet the ground is (0 dry .. 1 soaked): it soaks in over the first half minute of
     /// rain and dries over a couple of minutes after.
     wetness: f32,
@@ -724,6 +727,7 @@ impl Renderer {
             weather: vec![],
             cloud_shadows: 0.0,
             wetness: 0.0,
+            lightning: 0.0,
             effects: vec![],
             show_effects: true,
             effect_pipeline,
@@ -1350,6 +1354,19 @@ impl Renderer {
                     ..PostSettings::default()
                 };
             }
+        }
+        // Lightning: a cold white light over everything for a moment, the sky and all.
+        if self.lightning > 0.0 && self.show_effects && self.sky_profile.is_some() && self.room.is_none() && self.underwater <= 0.0 {
+            let l = self.lightning.min(1.5);
+            let flash = [0.45, 0.55, 0.95];
+            for (i, f) in flash.iter().enumerate() {
+                self.lighting.ambient[i] += f * l;
+                self.lighting.diffuse[i] += f * l * 0.4;
+            }
+            let p = &mut self.post_settings;
+            p.exposure *= 1.0 + 0.3 * l;
+            p.saturation *= 1.0 - 0.35 * l.min(1.0);
+            p.warmth -= 0.6 * l.min(1.0);
         }
         // Ease the shadow direction toward this frame's light (about a second).
         let mut goal = self.light_cast_dir();
