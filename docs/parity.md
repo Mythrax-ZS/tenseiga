@@ -41,7 +41,8 @@ epute*.bson)
 - [x] ZC_SPIRITS2 / SPIRITS_ATTRIBUTE / SOULENERGY, ZC_MILLENNIUMSHIELD (orbs coloured by kind)
 - [x] ZC_TARGET_SPIRITS (Enchanting Shadow orbs, dark violet)
 - [x] ZC_DISPEL (cast cancel), ZC_HIGHJUMP (slide); ZC_NOTIFY_SKILL_POSITION unused by rAthena
-- [x] ZC_COMBODELAY (tracked), ZC_BLADESTOP (both units held in place) — untested in game
+- [x] ZC_BLADESTOP (both units held in place): tested with a Monk's Root against an Orc Warrior
+- [~] ZC_COMBODELAY (logged only) and Monk combos: Chain Combo after Triple Attack did nothing in game, cause not found yet. Test with ordinary stats (the window is 1000 - 4 AGI - 2 DEX ms, never under the attack motion) and a target that survives the hit, and with RUST_LOG=tenseiga=debug ("combo window", "use skill", "skill hit")
 - [x] ZC_NOTIFY_BIND_ON_EQUIP (chat notice)
 - [x] ZC_CHANGE_ITEM_OPTION (0x0b43, Laphine upgrade); ZC_UPDATE_CARDSLOT not sent by rAthena
 - [x] ZC_ACK_TAKEOFF_EQUIP_ALL ("Take off all" button per equipment tab), ZC_MOVE_ITEM_FAILED
@@ -130,7 +131,7 @@ headers and clif.cpp, then compared with what this client reads and sends.
 - [x] Super Novice: /doridori (CZ_DORIDORI, the SP regen bonus; our head shakes left and right, others don't see it as the server doesn't tell them) and the guardian angel prayer said line by line in chat (msgstringtable 790-793, CZ_CHOPOKGI). Tested with an Expanded Super Novice: the head shakes; the prayer at 10.03% Base EXP, three separate chat lines, gave Critical Explosion (its cast, CRIT 4 to 54). The whole prayer in one line does nothing, as in the original. No status icon: iRO's stateiconimginfo has none for EFST_EXPLOSIONSPIRITS
 - [ ] Pet emotions (CZ_PET_ACT): when the original sends them is unknown
 - [x] Costumes (OPTION_WEDDING, XMAS, SUMMER, HANBOK, OKTOBERFEST, SUMMER2: the wedding and rAthena's @costume): the body becomes the costume's sprite (결혼, 산타, 여름, 한복, 옥토버패스트, 여름2) without weapon or shield, as the original does from the option alone. Doram keep their own body for now. /changedress and /nocosplay (CZ_REQ_CHANGEDRESS) take it off: tested with the wedding and Xmas costumes
-- [~] Stop attacking with the controller's East button (CZ_CANCEL_LOCKON), /resetskill (CZ_RESET_SKILL, which rAthena runs as @resetskill, so GMs only): not tested in game
+- [x] Stop attacking with the controller's East button (CZ_CANCEL_LOCKON), /resetskill (CZ_RESET_SKILL, which rAthena runs as @resetskill, so GMs only): both tested in game
 - [x] Turning in place (CZ_CHANGE_DIRECTION): Shift+click the ground (or click while sitting; holding the button keeps turning as the mouse goes round), and talking to an NPC turns toward it. One step round turns only the head, a second click the same way brings the body round, wider turns move the body to one step short with the head looking the rest (roBrowserLegacy's lookTo). Others' head turns come from ZC_CHANGE_DIRECTION and the unit packets' headDir; standing and sitting draw the matching head-turn frame
 - [x] Ground cursor: texture\grid.tga's corner marks on the walkable cell under the mouse, mint green and half opaque (measured from the original)
 - [x] Storage: Shift+right-click takes an item into the inventory's favourites tab (CZ_MOVE_ITEM_TO_PERSONAL, clients from 2025-01-22). Tested: the stack shows in the favourites tab at once (ZC_ITEM_PICKUP_ACK's favourite flag, which was read as off); a stackable item already carried joins its stack where it is, as the server does
