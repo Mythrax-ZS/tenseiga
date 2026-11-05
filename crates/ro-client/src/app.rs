@@ -337,6 +337,14 @@ impl MapLoad {
 fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler, rt_layers: Option<usize>, progress: &std::sync::atomic::AtomicU32) -> anyhow::Result<LoadedMap> {
     let started = std::time::Instant::now();
     let step = |thousandths: u32| progress.store(thousandths, std::sync::atomic::Ordering::Relaxed);
+    // `from..to` as `n` things get done (in any order, from any thread).
+    let span = |from: u32, to: u32, n: usize| {
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        move || {
+            let i = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            step(from + ((to - from) as usize * i.min(n) / n.max(1)) as u32);
+        }
+    };
     let read = |path: String| vfs.read(&path)?.with_context(|| format!("{path} not found"));
     let rsw = ro_formats::rsw::Rsw::parse(&read(format!("data\\{name}.rsw"))?)?;
     let gnd_name = if rsw.gnd.is_empty() { format!("{name}.gnd") } else { rsw.gnd.clone() };
@@ -350,9 +358,9 @@ fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler, rt_layers: 
     let mut models: std::collections::HashMap<String, Option<ro_formats::rsm::Rsm>> = Default::default();
     let mut builder = ro_render::SceneBuilder::new(&gnd);
     let mut failed = 0;
-    step(100);
+    step(20);
     for (i, inst) in rsw.models.iter().enumerate() {
-        step(100 + (400 * i / rsw.models.len().max(1)) as u32);
+        step(20 + (100 * i / rsw.models.len().max(1)) as u32);
         let rsm = models.entry(inst.file.to_ascii_lowercase()).or_insert_with(|| {
             let path = format!("data\\model\\{}", inst.file);
             match vfs.read(&path).map(|d| d.map(|d| ro_formats::rsm::Rsm::parse(&d))) {
@@ -377,41 +385,48 @@ fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler, rt_layers: 
         }
     }
     let mesh = builder.finish();
-    step(500);
+    step(120);
 
-    let load_textures = |names: &[String]| -> Vec<Option<ro_render::Rgba>> {
-        names
-            .iter()
-            .map(|t| {
-                let path = format!("data\\texture\\{t}");
-                match vfs.read(&path).and_then(|d| d.map(|d| ro_formats::image::decode(&d, &path)).transpose()) {
-                    Ok(Some(img)) => Some(img),
-                    Ok(None) => {
-                        tracing::warn!(%path, "texture missing");
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!(%path, "texture unreadable: {e:#}");
-                        None
-                    }
+    // Where most of the time goes: textures read, upscaled and given their mip chains.
+    let load_textures = |names: &[String], each: &(dyn Fn() + Sync)| -> Vec<Option<ro_render::Rgba>> {
+        let load = |t: &String| {
+            let path = format!("data\\texture\\{t}");
+            let img = match vfs.read(&path).and_then(|d| d.map(|d| ro_formats::image::decode(&d, &path)).transpose()) {
+                Ok(Some(img)) => Some(img),
+                Ok(None) => {
+                    tracing::warn!(%path, "texture missing");
+                    None
                 }
-            })
-            .collect()
+                Err(e) => {
+                    tracing::warn!(%path, "texture unreadable: {e:#}");
+                    None
+                }
+            };
+            each();
+            img
+        };
+        // Decoded side by side (a GRF holds its lock only to read the bytes), leaving a core
+        // for the frame loop.
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).saturating_sub(1).clamp(1, 16);
+        let chunk = names.len().div_ceil(threads).max(1);
+        std::thread::scope(|scope| {
+            let parts: Vec<_> = names.chunks(chunk).map(|part| scope.spawn(move || part.iter().map(load).collect::<Vec<_>>())).collect();
+            parts.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+        })
     };
     // Ground textures come first in the mesh's list, then the models'.
     let classes = (0..mesh.textures.len()).map(|i| if i < mesh.ground_textures { ro_render::AssetClass::Ground } else { ro_render::AssetClass::Model });
-    let decoded = load_textures(&mesh.textures);
-    step(650);
-    let images = up.apply_all(classes.zip(mesh.textures.iter().cloned()).zip(decoded).map(|((c, n), img)| (c, n, img)).collect());
-    step(800);
-    let scene = ro_render::prepare_scene(&mesh, images, rt_layers);
-    step(900);
+    let n = mesh.textures.len();
+    let decoded = load_textures(&mesh.textures, &span(120, 600, n));
+    let images = up.apply_all_counted(classes.zip(mesh.textures.iter().cloned()).zip(decoded).map(|((c, n), img)| (c, n, img)).collect(), &span(600, 750, n));
+    let scene = ro_render::prepare_scene_counted(&mesh, images, rt_layers, &span(750, 950, n));
     // RSW 2.6+ moved the water into the GND (1.8+).
     let water = rsw.water.or(gnd.water).as_ref().map(|w| {
         let mesh = ro_render::WaterMesh::build(&gnd, w);
-        let images = up.apply_all(mesh.textures.iter().cloned().zip(load_textures(&mesh.textures)).map(|(n, img)| (ro_render::AssetClass::Ground, n, img)).collect());
+        let images = up.apply_all(mesh.textures.iter().cloned().zip(load_textures(&mesh.textures, &|| {})).map(|(n, img)| (ro_render::AssetClass::Ground, n, img)).collect());
         (mesh, images)
     });
+    step(1000);
     tracing::info!(
         map = name,
         size = format_args!("{}x{}", gnd.width, gnd.height),

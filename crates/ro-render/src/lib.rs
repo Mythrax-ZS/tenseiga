@@ -1785,17 +1785,29 @@ pub struct PreparedScene {
 /// The CPU half of `Renderer::set_scene`, which needs no GPU and so can run on any thread:
 /// mip chains, and with `rt_layers` (`Renderer::rt_layers`) the ray tracing geometry.
 pub fn prepare_scene(mesh: &SceneMesh, images: Vec<Option<Rgba>>, rt_layers: Option<usize>) -> PreparedScene {
+    prepare_scene_counted(mesh, images, rt_layers, &|| {})
+}
+
+/// `prepare_scene`, calling `each` as every texture's mip chain is done (for a progress bar).
+pub fn prepare_scene_counted(mesh: &SceneMesh, images: Vec<Option<Rgba>>, rt_layers: Option<usize>, each: &dyn Fn()) -> PreparedScene {
     let rt = rt_layers.map(|max| {
         let refs: Vec<Option<&Rgba>> = images.iter().map(Option::as_ref).collect();
         rt::split(&mesh.vertices, &mesh.ranges, &refs, max)
     });
-    PreparedScene { textures: mip_chains(images), rt }
+    PreparedScene { textures: mip_chains(images, each), rt }
 }
 
 /// Each texture's mip chain; a missing texture is a magenta pixel.
-fn mip_chains(images: Vec<Option<Rgba>>) -> Vec<Vec<Rgba>> {
+fn mip_chains(images: Vec<Option<Rgba>>, each: &dyn Fn()) -> Vec<Vec<Rgba>> {
     let fallback = Rgba { width: 1, height: 1, pixels: vec![255, 0, 255, 255] };
-    images.into_iter().map(|img| scene::mip_chain(img.unwrap_or_else(|| fallback.clone()), true)).collect()
+    images
+        .into_iter()
+        .map(|img| {
+            let chain = scene::mip_chain(img.unwrap_or_else(|| fallback.clone()), true);
+            each();
+            chain
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1820,7 +1832,9 @@ mod prepare_tests {
     #[test]
     fn textures_get_their_mip_chains_and_missing_ones_a_stand_in() {
         let img = Rgba { width: 4, height: 2, pixels: vec![200; 4 * 2 * 4] };
-        let chains = mip_chains(vec![Some(img), None]);
+        let counted = std::cell::Cell::new(0);
+        let chains = mip_chains(vec![Some(img), None], &|| counted.set(counted.get() + 1));
+        assert_eq!(counted.get(), 2);
         let sizes: Vec<Vec<(u32, u32)>> = chains.iter().map(|l| l.iter().map(|m| (m.width, m.height)).collect()).collect();
         assert_eq!(sizes, [vec![(4, 2), (2, 1), (1, 1)], vec![(1, 1)]]);
         assert_eq!(chains[1][0].pixels, [255, 0, 255, 255]);

@@ -17,6 +17,8 @@ pub struct Splash {
     loading_names: Vec<String>,
     /// The loading screen, when it was first drawn, and when the map was in.
     loading: Option<(egui::TextureHandle, Option<f64>, Option<f64>)>,
+    /// The bar as last drawn (it glides toward the loader's progress).
+    bar: f32,
     /// Why the map didn't load, shown on the loading screen (it then stays up).
     failed: Option<String>,
     started: Option<f64>,
@@ -44,7 +46,7 @@ fn cover(ctx: &egui::Context, tex: &egui::TextureHandle, alpha: f32) {
 impl Splash {
     pub fn new(ctx: &egui::Context, vfs: Option<&ro_vfs::Vfs>) -> Self {
         let Some(vfs) = vfs else {
-            return Self { title: None, grade: None, loading_names: vec![], loading: None, failed: None, started: None };
+            return Self { title: None, grade: None, loading_names: vec![], loading: None, bar: 0.0, failed: None, started: None };
         };
         // The original ships up to 36 loading screens; use whichever exist.
         let loading_names = (0..40).map(|i| format!("{UI}loading{i:02}.jpg")).filter(|p| vfs.read(p).ok().flatten().is_some()).collect();
@@ -53,6 +55,7 @@ impl Splash {
             grade: load(ctx, vfs, &format!("{UI}t_gamegrade.tga")),
             loading_names,
             loading: None,
+            bar: 0.0,
             failed: None,
             started: None,
         }
@@ -96,6 +99,7 @@ impl Splash {
         let path = &self.loading_names[seed % self.loading_names.len()];
         if let Some(tex) = load(ctx, vfs, path) {
             self.loading = Some((tex, None, None));
+            self.bar = 0.0;
             self.failed = None;
         }
     }
@@ -118,7 +122,11 @@ impl Splash {
         // The bar follows the loader; once the map is in it fills over the screen's minimum
         // showing time (at once, after a slow load).
         let following = 0.1 + 0.8 * loaded.clamp(0.0, 1.0);
-        let progress = if done { following.max(((now - since) / 0.6) as f32) } else { following };
+        let target = if done { following.max(((now - since) / 0.6) as f32) } else { following };
+        // Glide (about a tenth of a second behind) rather than jump between the loader's steps.
+        let dt = ctx.input(|i| i.stable_dt).min(0.1);
+        self.bar = (self.bar + (target - self.bar) * (dt * 12.0).min(1.0)).max(0.1);
+        let progress = self.bar;
         // Stay at least a moment so it doesn't just flash, then fade out once loaded.
         let fade_from = done_at.map(|d| d.max(since + 0.6));
         let alpha = match fade_from {
