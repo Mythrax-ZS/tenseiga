@@ -26,7 +26,7 @@ client's log names every packet it doesn't handle yet (`unhandled packet`, once 
 - [x] Failed item adds (full inventory, overweight) now say why
 - [x] Reputation window (ZC_REPUTE_INFO / OPEN, names from contentdata
 epute*.bson)
-- [~] Item merge window (mergeitem): built; no mergeable stacks could be produced to test
+- [x] Item merge window (mergeitem): tested with three Usable Power Box 1 (13826). rAthena merges only stackable, non-Cash items with a unique id (item_db `UniqueId`, each one obtained its own stack); the merged stack takes its new total from ZC_ACK_MERGE_ITEM (it kept the old amount). The stock Mergician stands on itemmall, which iRO and kRO data lack; a copy elsewhere that runs `mergeitem` works
 - [x] ZC_RANDOM_COMBINE / RANDOM_UPGRADE_ITEM (Laphine synthesis + upgrade windows, recipes from lapine*.lub merged across iRO/kRO; ZC_CHANGE_ITEM_OPTION 0x0b43)
 
 ## Items and skills
