@@ -1082,6 +1082,9 @@ impl App {
                     }
                 }
             }
+            if let Some(vfs) = self.vfs.as_deref() {
+                self.weather.update(dt, self.settings.visual.weather, &w.name, w.climate, r, vfs);
+            }
             // Ambient map effects (RSW emitters, EF_* ids): torches loop in place; bubbles and
             // fireflies fire again on each emitter's own timer while the player is near.
             if let (Some(vfs), Some(p)) = (self.vfs.as_deref(), self.player.as_ref()) {

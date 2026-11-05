@@ -14,6 +14,7 @@ mod sky_profile;
 mod sprite;
 mod upscale;
 mod water;
+mod weather;
 
 use std::sync::Arc;
 
@@ -24,6 +25,7 @@ pub use ro_formats::image::Rgba;
 pub use scene::{rsm_at, SceneBuilder, SceneMesh, Vertex as ModelVertex};
 pub use upscale::{is_sprite_path, AssetClass, Quality as UpscaleQuality, UpscaleSettings, Upscaler};
 pub use water::{flag as water_flag, Foam, WaterMesh, WaterQuality, WaterSettings};
+pub use weather::{WeatherKind, WeatherLayer};
 pub use effect::{AuraLayer, AuraStyle, ProcFx, Shape, TenseigaPart, TexId};
 pub use particle::{Emitter, EmitterDef, Glow, Waterfall, Wind};
 pub use fx::{Fx, FxId};
@@ -259,6 +261,9 @@ pub struct Renderer {
     pub auras: Vec<ProcFx>,
     /// Map particle emitters (RSW EF_EMITTER).
     particles: particle::Particles,
+    weather_pass: weather::WeatherPass,
+    /// Weather on show (the game eases each layer's strength in and out).
+    pub weather: Vec<WeatherLayer>,
     /// STR effects playing this frame; the client advances and removes them.
     pub effects: Vec<Fx>,
     /// Draw skill effects (STR and code-drawn); the original's /effect turns them off.
@@ -591,6 +596,7 @@ impl Renderer {
         let shadow = shadow::Shadow::new(&device, &sprite_layout, shadow::SIZE);
         let torches = [(); TORCHES].map(|_| shadow::Shadow::new(&device, &sprite_layout, shadow::TORCH_SIZE));
         let particles = particle::Particles::new(&device, &globals_layout, &sprite_layout, samples);
+        let weather_pass = weather::WeatherPass::new(&device, &globals_layout, &sprite_layout, samples);
         let room_mask = room_mask_view(&device, &queue, 1, 1, &[255]);
         let globals_bind = globals_bind_group(&device, &globals_layout, &globals, &shadow, &torches, &room_mask);
         let effect_pipeline = pipeline(
@@ -702,6 +708,8 @@ impl Renderer {
             procs: vec![],
             auras: vec![],
             particles,
+            weather_pass,
+            weather: vec![],
             effects: vec![],
             show_effects: true,
             effect_pipeline,
@@ -856,6 +864,7 @@ impl Renderer {
     /// Forgets the map: none of it is drawn until the next `set_scene` (a map whose files
     /// couldn't be loaded, so the last one doesn't stay on screen under the new map's units).
     pub fn clear_map(&mut self) {
+        self.weather.clear();
         self.scene = None;
         self.rt_bind = None;
         self.ground = Default::default();
@@ -1314,7 +1323,9 @@ impl Renderer {
         let cam = &self.camera;
         // The sun's view of the area around the player, for sprite shadows.
         let light_vp = shadow::Shadow::light_vp(cam.target, self.cast_dir, (cam.distance * 0.75).clamp(120.0, 600.0));
-        let shadow_strength = if self.post_settings.enabled { self.post_settings.shadow_strength } else { 0.0 };
+        // Weather clouds the sun over: softer shadows, dimmer direct light.
+        let overcast = if self.show_effects { weather::overcast(&self.weather) } else { 0.0 };
+        let shadow_strength = if self.post_settings.enabled { self.post_settings.shadow_strength * (1.0 - 0.7 * overcast) } else { 0.0 };
         // The strongest torches around the player, each with a shadow strength that fades in
         // as the player nears it. Not faded at night (`day_post`): that's when torches matter.
         let torches: Vec<(&PointLight, f32)> = {
@@ -1355,7 +1366,7 @@ impl Renderer {
             eye: cam.eye().extend(1.0).to_array(),
             light_dir: glam::Vec3::from(self.lighting.direction).normalize_or_zero().extend(0.0).to_array(),
             ambient: glam::Vec3::from(self.lighting.ambient).extend(0.0).to_array(),
-            diffuse: glam::Vec3::from(self.lighting.diffuse).extend(0.0).to_array(),
+            diffuse: (glam::Vec3::from(self.lighting.diffuse) * (1.0 - 0.45 * overcast)).extend(0.0).to_array(),
             params: {
                 // Clip units per sprite pixel at w = 1 (horizontal, vertical).
                 let f = 1.0 / (cam.fovy / 2.0).tan();
@@ -1606,6 +1617,25 @@ impl Renderer {
                     pass.set_bind_group(1, bind, &[]);
                     pass.set_vertex_buffer(0, buffer.slice(..));
                     pass.draw(0..verts.len() as u32, 0..1);
+                }
+            }
+            // Weather (hidden with the other effects, as the original's /effect does).
+            if self.show_effects && !self.weather.is_empty() {
+                let shown = &self.weather[..self.weather.len().min(weather::MAX_LAYERS)];
+                let mut data = [weather::Layer::default(); weather::MAX_LAYERS];
+                let mut counts = [0u32; weather::MAX_LAYERS];
+                let inv = self.camera.view_proj(aspect).inverse();
+                for ((d, n), w) in data.iter_mut().zip(&mut counts).zip(shown) {
+                    (*d, *n) = weather::layer(w, self.camera.target, inv);
+                }
+                self.queue.write_buffer(&self.weather_pass.uniform, 0, bytemuck::cast_slice(&data));
+                pass.set_pipeline(&self.weather_pass.pipeline);
+                pass.set_bind_group(2, &self.weather_pass.bind, &[]);
+                for (i, w) in shown.iter().enumerate() {
+                    let Some(bind) = self.effect_textures.get(w.tex.0) else { continue };
+                    pass.set_bind_group(1, bind, &[]);
+                    let first = i as u32 * weather::PER_LAYER;
+                    pass.draw(0..6, first..first + counts[i]);
                 }
             }
             // Skill effects over everything else in the world.

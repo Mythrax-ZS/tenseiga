@@ -314,6 +314,7 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         focused: true,
         minimised: false,
         map_load: None,
+        weather: weather::Weather::with_forced(arg("--weather").map(|w| w.split(',').filter_map(weather_kind).collect()).unwrap_or_default()),
         preloaded: None,
         capture: arg("--capture").map(|p| {
             let (w, h) = arg("--size")
@@ -469,4 +470,18 @@ mod log_path_tests {
         let second = Path::new("config/local2.toml");
         assert_eq!(super::log_path(Some(second)), Path::new("config/tenseiga-local2.log"), "a second client keeps its own log");
     }
+}
+
+/// `--weather` names: snow, rain, petals, leaves, fog, clouds.
+fn weather_kind(name: &str) -> Option<ro_render::WeatherKind> {
+    use ro_render::WeatherKind::*;
+    Some(match name.trim() {
+        "snow" => Snow,
+        "rain" => Rain,
+        "petals" | "sakura" => Petals,
+        "leaves" | "maple" => Leaves,
+        "fog" => Fog,
+        "clouds" => Clouds,
+        _ => return None,
+    })
 }

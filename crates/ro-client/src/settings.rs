@@ -142,6 +142,8 @@ pub struct Visual {
     /// at 70%, a 1440p one at 50%), full resolution on smaller screens. On by default on
     /// Android, where dense screens and per-pixel GPU cost meet.
     pub render_auto: bool,
+    /// Snow, rain, petals...: the server's alone, or also the client's own by climate.
+    pub weather: crate::weather::WeatherMode,
 }
 
 impl Default for Visual {
@@ -156,6 +158,7 @@ impl Default for Visual {
             sun_elevation: p.sun_elevation,
             sun_cycle: p.sun_cycle_minutes,
             water: 3,
+            weather: Default::default(),
             warmth: p.warmth,
             saturation: p.saturation,
             contrast: p.contrast,
@@ -527,6 +530,13 @@ impl Settings {
                     ui.selectable_value(&mut v.water, i as u8, q.name());
                 }
             });
+        });
+        ui.end_row();
+        ui.label("Weather").on_hover_text("The server's snow, petals, leaves, clouds and fog; ambient adds the client's own by climate: snow on snowy maps, petals by cherry trees, leaves in forests, fog in Niflheim, and now and then rain");
+        egui::ComboBox::from_id_salt("weather").selected_text(v.weather.name()).show_ui(ui, |ui| {
+            for m in crate::weather::WeatherMode::ALL {
+                ui.selectable_value(&mut v.weather, m, m.name());
+            }
         });
         ui.end_row();
         section(ui, "Look");
