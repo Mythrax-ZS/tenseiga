@@ -28,6 +28,14 @@ struct Globals {
     upscale: vec4<f32>,
     // xyz: direction the sun's light travels, w: ray tracing on (bits: 1 shadows, 2 reflections)
     rt: vec4<f32>,
+    // (Torches and cloud shadows, used by the scene.)
+    torch_vp: array<mat4x4<f32>, 2>,
+    torch: array<vec4<f32>, 2>,
+    torch_k: vec4<f32>,
+    clouds: vec4<f32>,
+    // x how wet (rain on the water: rings where drops land), y how hard it rains now.
+    wet: vec4<f32>,
+    wet_sky: vec4<f32>,
 };
 
 struct Water {
@@ -422,6 +430,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         stir = disturb(p.xz, t);
         n = normalize(vec3(n.x + stir.x, n.y, n.z + stir.y));
     }
+    // Rain: rings spreading where the drops land.
+    if g.wet.y > 0.0 {
+        let ring = drops(p.xz, g.params.x) * 0.9 * g.wet.y;
+        n = normalize(vec3(n.x + ring.x, n.y, n.z + ring.y));
+    }
 
     // Depth: the baked vertical depth everywhere, and the view-ray thickness from the
     // opaque scene where the screen copy is available.
@@ -584,6 +597,36 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         alpha *= edge;
     }
     return vec4(color, alpha);
+}
+
+// Raindrops landing: a ring spreading from each, one drop in every 7-unit cell about once a
+// second, each cell at its own place and beat. The slope of the rings (for a normal).
+fn drops(p: vec2<f32>, t: f32) -> vec2<f32> {
+    let size = 7.0;
+    let i0 = floor(p / size);
+    var slope = vec2(0.0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let c = i0 + vec2(f32(x), f32(y));
+            let h1 = drop_hash(c);
+            let h2 = drop_hash(c + vec2(31.0, 17.0));
+            let age = fract(t * 1.1 + h1 * 7.0 + h2 * 3.0);
+            let d = p - (c + vec2(h1, h2)) * size;
+            let r = length(d);
+            let off = r - age * size * 0.9;
+            let ring = (1.0 - age) * exp(-off * off / 0.6) * cos(off * 3.0);
+            slope += d / max(r, 1e-3) * ring;
+        }
+    }
+    return slope * 0.5;
+}
+
+fn drop_hash(i: vec2<f32>) -> f32 {
+    let v = vec2<u32>(vec2<i32>(i) + vec2(65536));
+    var h = v.x * 747796405u + v.y * 2891336453u + 99991u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+    return f32(h & 0xffffu) / 65535.0;
 }
 
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.

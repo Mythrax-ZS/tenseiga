@@ -78,6 +78,9 @@ struct Globals {
     /// Cloud shadows: x how much of the sun a cloud takes (0 off), y how much of the sky is
     /// cloud (0..1), zw their drift (world units a second).
     clouds: [f32; 4],
+    /// Wet ground: x how wet (0..1), y how hard it rains now (drop rings); the sky's colour.
+    wet: [f32; 4],
+    wet_sky: [f32; 4],
 }
 
 /// Torches near the player that cast sprite shadows, each with a shadow map.
@@ -269,6 +272,9 @@ pub struct Renderer {
     pub weather: Vec<WeatherLayer>,
     /// STR effects playing this frame; the client advances and removes them.
     pub effects: Vec<Fx>,
+    /// How wet the ground is (0 dry .. 1 soaked): it soaks in over the first half minute of
+    /// rain and dries over a couple of minutes after.
+    wetness: f32,
     /// Cloud shadows drifting over outdoor maps (0 off .. 1 deep): how much of the sun a
     /// passing cloud takes on a fair day; cloudy weather brings more of them, and deeper.
     pub cloud_shadows: f32,
@@ -717,6 +723,7 @@ impl Renderer {
             weather_pass,
             weather: vec![],
             cloud_shadows: 0.0,
+            wetness: 0.0,
             effects: vec![],
             show_effects: true,
             effect_pipeline,
@@ -872,6 +879,7 @@ impl Renderer {
     /// couldn't be loaded, so the last one doesn't stay on screen under the new map's units).
     pub fn clear_map(&mut self) {
         self.weather.clear();
+        self.wetness = 0.0;
         self.scene = None;
         self.rt_bind = None;
         self.ground = Default::default();
@@ -1124,6 +1132,14 @@ impl Renderer {
         (self.config.width, self.config.height)
     }
 
+    /// How hard it rains on this map now (0..1): outdoors, with effects shown.
+    fn raining(&self) -> f32 {
+        if !self.show_effects || self.room.is_some() || self.underwater > 0.0 || self.sky_profile.is_none() {
+            return 0.0;
+        }
+        self.weather.iter().filter(|w| w.kind == WeatherKind::Rain).map(|w| w.strength.clamp(0.0, 1.0)).fold(0.0, f32::max)
+    }
+
     /// The globals' cloud shadows: outdoors only (not indoors, underwater, or with the HD-2D
     /// look off), more and deeper under cloudy weather.
     fn cloud_globals(&self) -> [f32; 4] {
@@ -1284,6 +1300,9 @@ impl Renderer {
         self.last_frame = now;
         let goal = if self.night { 1.0 } else { 0.0 };
         self.night_t += (goal - self.night_t).clamp(-dt * 0.5, dt * 0.5);
+        // The ground soaks in the rain, and dries after.
+        let soak = self.raining();
+        self.wetness += (soak - self.wetness).clamp(-dt / 120.0, dt / 30.0);
         // The sun rises when day returns and climbs while it lasts.
         if self.was_night && !self.night {
             self.day_clock = 0.0;
@@ -1437,6 +1456,18 @@ impl Renderer {
             torch: std::array::from_fn(|i| torches.get(i).map_or([0.0; 4], |(l, _)| l.pos.extend(l.range).to_array())),
             torch_k: [torches.first().map_or(0.0, |t| t.1), torches.get(1).map_or(0.0, |t| t.1), 1.0 / shadow::TORCH_SIZE as f32, 0.0],
             clouds: self.cloud_globals(),
+            wet: [if self.post_settings.enabled { self.wetness } else { 0.0 }, self.raining(), 0.0, 0.0],
+            wet_sky: match self.sky_profile.as_ref() {
+                Some(p) => {
+                    // Under rain the sky is grey: the clear sky's colour, washed out by the gloom.
+                    let (h, z) = (glam::Vec3::from(sky::horizon_color(p, self.night_t)), glam::Vec3::from(sky::zenith_color(p, self.night_t)));
+                    let clear = h.lerp(z, 0.4);
+                    let grey = glam::Vec3::splat(clear.dot(glam::Vec3::new(0.3, 0.59, 0.11)) * 0.75);
+                    let o = if self.show_effects { weather::overcast(&self.weather) } else { 0.0 };
+                    clear.lerp(grey, (o * 1.1).min(0.9)).extend(0.0).to_array()
+                }
+                None => [0.0; 4],
+            },
             upscale: [if self.upscale_runtime { 1.0 } else { 0.0 }, if self.post_settings.enabled { self.post_settings.relief } else { 0.0 }, 0.0, 0.0],
             // Outdoors only: interiors and dungeons keep their hand-baked light and shadow.
             rt: {

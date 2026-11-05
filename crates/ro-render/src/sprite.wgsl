@@ -37,6 +37,9 @@ struct Globals {
     torch_k: vec4<f32>,
     // Cloud shadows (cloud_shade).
     clouds: vec4<f32>,
+    // (Wet ground, used by the scene and water.)
+    wet: vec4<f32>,
+    wet_sky: vec4<f32>,
 };
 
 /// World units (about two cells) a sprite's depth is pulled toward the camera.
