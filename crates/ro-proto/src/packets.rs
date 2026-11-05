@@ -13,12 +13,15 @@ pub fn put_fixed_str(dst: &mut BytesMut, s: &str, n: usize) {
 }
 
 pub fn get_fixed_str(src: &mut &[u8], n: usize) -> String {
-    let raw = &src[..n];
-    let end = raw.iter().position(|&c| c == 0).unwrap_or(n);
-    let (s, _, _) = EUC_KR.decode(&raw[..end]);
-    let s = s.into_owned();
+    let s = decode_cstr(&src[..n]);
     src.advance(n);
     s
+}
+
+/// A string field in the game's encoding (CP949), up to its first NUL or the field's end.
+pub fn decode_cstr(raw: &[u8]) -> String {
+    let end = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+    EUC_KR.decode(&raw[..end]).0.into_owned()
 }
 
 fn ipv4(ip: u32) -> std::net::Ipv4Addr {
@@ -509,6 +512,17 @@ pub fn parse_accept_enter(data: &[u8]) -> AcceptEnter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strings_are_cp949_up_to_the_nul() {
+        // 하야테 in CP949, then the NUL and leftover bytes of the fixed field.
+        let field = [0xc7, 0xcf, 0xbe, 0xdf, 0xc5, 0xd7, 0, b'x', b'y'];
+        assert_eq!(decode_cstr(&field), "하야테");
+        assert_eq!(decode_cstr(b"prontera.gat"), "prontera.gat", "a field with no NUL ends at its end");
+        let mut src = &field[..];
+        assert_eq!(get_fixed_str(&mut src, 7), "하야테");
+        assert_eq!(src, b"xy");
+    }
 
     #[test]
     fn bare_requests_are_their_opcode() {
