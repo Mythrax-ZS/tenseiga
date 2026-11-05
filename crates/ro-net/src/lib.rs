@@ -930,7 +930,9 @@ pub fn spawn_session(cfg: SessionConfig) -> (tokio::sync::mpsc::UnboundedSender<
                     return;
                 }
             };
-            let result: anyhow::Result<()> = rt.block_on(async {
+            // A panic here (a malformed packet read past its end, say) must still end in
+            // Disconnected: otherwise the channel just closes and the client waits forever.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> anyhow::Result<()> { rt.block_on(async {
                 let mut cmd_rx = cmd_rx;
                 // Set when the player goes back to character select from the game.
                 let mut resume: Option<(AcceptLogin, CharServerInfo)> = None;
@@ -996,15 +998,31 @@ pub fn spawn_session(cfg: SessionConfig) -> (tokio::sync::mpsc::UnboundedSender<
                     let _ = ev_tx.send(Event::LeftGame);
                     resume = Some((auth, server));
                 }
-            });
+            }) }));
             let reason = match result {
-                Ok(()) => "closed".to_string(),
-                Err(e) => format!("{e:#}"),
+                Ok(Ok(())) => "closed".to_string(),
+                Ok(Err(e)) => format!("{e:#}"),
+                Err(panic) => {
+                    let what = panic_message(panic.as_ref());
+                    tracing::error!(what, "net thread panicked");
+                    format!("client error ({what})")
+                }
             };
             let _ = ev_tx.send(Event::Disconnected(reason));
         })
         .expect("spawn net thread");
     (cmd_tx, ev_rx)
+}
+
+/// The text a panic was raised with, when it has one.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
 }
 
 impl MapSession {
@@ -2391,5 +2409,37 @@ mod tests {
         assert_eq!(walk, (153, 98));
         drop(tx);
         assert!(matches!(run.await.unwrap(), Ok(MapExit::Closed)), "closing the command channel ends the session");
+    }
+
+    #[test]
+    fn a_panic_on_the_net_thread_still_reports_disconnected() {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut ca = [0; 55];
+            s.read_exact(&mut ca).unwrap();
+            // An AC_ACCEPT_LOGIN with no body: the parser reads past its end.
+            s.write_all(&packet(0x0ac4, &[])).unwrap();
+            // Hold the connection until the client goes, so only the panic can end the session.
+            let _ = s.read(&mut [0; 1]);
+        });
+        let cfg = SessionConfig {
+            login_addr: addr.to_string(),
+            username: "test".into(),
+            password: "pass".into(),
+            char_slot: 0,
+            auto: true,
+            pincode: String::new(),
+        };
+        let (tx, rx) = spawn_session(cfg);
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Event::Disconnected(reason)) => assert!(reason.contains("client error"), "reason: {reason}"),
+            Ok(_) => panic!("expected Disconnected first"),
+            Err(e) => panic!("no Disconnected from the net thread: {e}"),
+        }
+        drop(tx);
+        server.join().unwrap();
     }
 }
