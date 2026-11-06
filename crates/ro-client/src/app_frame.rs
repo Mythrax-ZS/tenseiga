@@ -822,6 +822,18 @@ impl App {
             }
         }
         self.units.retain(|_, m| m.dying.is_none_or(|t| t > 0.0));
+        // MVP timers: say when a window opens (checked once a second).
+        let unix = mvptimers::now_unix();
+        if unix != self.mvp_checked {
+            self.mvp_checked = unix;
+            let mut said = vec![];
+            if mvptimers::MvpTimers::tick(&mut self.settings.mvp_deaths, unix, |d| said.push(format!("MVP timer: {} may be back on {} now.", d.name, d.map))) {
+                self.settings.save();
+            }
+            for line in said {
+                self.hud.push_chat(ro_net::ChatKind::System, line);
+            }
+        }
         // The target frame lets go of a monster that died, left or has been left alone
         // (unless we are still attacking it).
         if let Some((id, last)) = self.focus {
@@ -1792,6 +1804,12 @@ impl App {
                     }
                 }
                 self.combat.show(ui.ctx());
+                {
+                    let navi_names = &self.navi;
+                    if self.mvp.show(ui.ctx(), &mut self.settings.mvp_deaths, &|m| navi_names.map_name(m).map(str::to_string)) {
+                        self.settings.save();
+                    }
+                }
                 if let Some(k) = self.ranking.show(ui.ctx()) {
                     self.queued_commands.push(ro_net::Command::Ranking(k));
                 }

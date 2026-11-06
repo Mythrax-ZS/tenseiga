@@ -3,6 +3,8 @@
 mod audio;
 mod chatlog;
 mod combat;
+mod mvptimers;
+mod mvptimes_db;
 mod targetframe;
 mod mobinfo;
 mod mobinfo_db;
@@ -1254,6 +1256,10 @@ struct App {
     ranking: ranking::Ranking,
     /// The combat log and damage meter (Alt+D).
     combat: combat::Combat,
+    /// MVP timers (More… > MVP Timers); the deaths live in settings.
+    mvp: mvptimers::MvpTimers,
+    /// When the MVP timers last checked for windows opening (unix seconds).
+    mvp_checked: i64,
     store_search: storesearch::StoreSearch,
     stylist: stylist::Stylist,
     reform: reform::Reform,
@@ -2502,6 +2508,10 @@ impl App {
             "c" => self.toggle_cash_shop(),
             "y" => self.progress.open = !self.progress.open,
             "d" => self.combat.open = !self.combat.open,
+            "mvp" => {
+                self.navi.ensure_loaded(self.vfs.as_deref());
+                self.mvp.open = !self.mvp.open;
+            }
             "clan" => self.clan.open = !self.clan.open,
             "repute" => {
                 self.reputation.load(self.vfs.as_deref());

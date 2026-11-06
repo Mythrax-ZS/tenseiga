@@ -189,6 +189,8 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         game_opts: Default::default(),
         ranking: Default::default(),
         combat: Default::default(),
+        mvp: Default::default(),
+        mvp_checked: 0,
         cast_skill: Default::default(),
         focus: None,
         store_search: Default::default(),

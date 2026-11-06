@@ -886,6 +886,12 @@ impl App {
                         self.walk_goal = None;
                     }
                 } else if reason == 1 {
+                    // A boss with a timed spawn here: its MVP timer starts.
+                    if let (Some(m), Some(w)) = (self.units.get(&id).filter(|m| m.kind == 5), self.world.as_ref()) {
+                        if mvptimers::MvpTimers::died(&mut self.settings.mvp_deaths, &w.name, m.class as u16, &m.name, mvptimers::now_unix()) {
+                            self.settings.save();
+                        }
+                    }
                     // Died: play the death animation, then remove.
                     let death_3d = self.units.get(&id).and_then(|m| self.models3d.get(&m.class)).and_then(|l| l.as_ref()).map(|l| l.death_ms());
                     if let Some(m) = self.units.get_mut(&id) {
