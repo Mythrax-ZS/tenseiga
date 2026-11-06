@@ -35,6 +35,9 @@ struct Globals {
     torch_k: vec4<f32>,
     // Cloud shadows (cloud_shade).
     clouds: vec4<f32>,
+    // Wet ground (wet_surface): x how wet, y how hard it rains now; the sky's colour (linear).
+    wet: vec4<f32>,
+    wet_sky: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -126,6 +129,8 @@ fn fs_main(in: VsOut) -> FsOut {
     let ddy = dpdy(in.uv);
     let dwx = dpdx(in.world);
     let dwy = dpdy(in.world);
+    // The ground's lightmap coordinates run across it; every model's are one white texel.
+    let ground = select(0.0, 1.0, any(fwidth(in.lightmap_uv) > vec2(0.0)));
     var t: vec4<f32>;
     let size = vec2<f32>(textureDimensions(tex));
     let footprint = max(dot(ddx * size, ddx * size), dot(ddy * size, ddy * size));
@@ -155,7 +160,7 @@ fn fs_main(in: VsOut) -> FsOut {
     let pl = point_light(in.world, n);
     // The torch light baked into the lightmap wavers with the flame.
     let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) * (1.0 + pl.w) + srgb_to_linear(t.rgb * in.color) * pl.rgb) * torch_shadows(in.world);
-    return FsOut(vec4(lit, 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
+    return FsOut(vec4(wet_surface(lit, in.world, flat, ground), 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
 }
 
 // Surface relief: the texture's own brightness read as height (pale stone stands out of dark
@@ -304,6 +309,64 @@ fn cloud_noise(p: vec2<f32>) -> f32 {
 fn cloud_hash(i: vec2<f32>) -> f32 {
     let v = vec2<u32>(vec2<i32>(i) + vec2(65536));
     var h = v.x * 747796405u + v.y * 2891336453u + 12345u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+    return f32(h & 0xffffu) / 65535.0;
+}
+
+// Rain-soaked ground (g.wet.x: 0 dry .. 1 soaked; it soaks in and dries out slowly): darker
+// and glossy, the sun glinting off it, and on the ground (`ground` 1) puddles in the low
+// spots of a slow noise field (more as it gets wetter) holding the sky, with rings where the
+// drops land. Surfaces facing up get wet; walls stay as they are.
+fn wet_surface(lit: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
+    let w = g.wet.x * smoothstep(0.35, 0.85, n.y);
+    if w <= 0.001 || g.room.x > 0.5 {
+        return lit;
+    }
+    // Puddles: small, scattered, on flat ground only.
+    let field = cloud_noise(world.xz / 15.0) * 0.6 + cloud_noise(world.xz / 5.5 + vec2(7.1, 3.3)) * 0.4;
+    let fill = 0.75 - 0.06 * g.wet.x;
+    let puddle = smoothstep(fill, fill + 0.05, field) * w * smoothstep(0.92, 0.98, n.y) * ground;
+    let ring = drops(world.xz, g.params.x) * (0.08 + 0.45 * puddle) * g.wet.y * ground;
+    let nr = normalize(vec3(n.x + ring.x, n.y, n.z + ring.y));
+    let v = normalize(g.eye.xyz - world);
+    let fres = pow(1.0 - max(dot(nr, v), 0.0), 5.0);
+    // Soaked: darker (a little more on the ground), darker still under a puddle's water.
+    let base = lit * (1.0 - (0.22 + 0.13 * ground) * w) * (1.0 - 0.55 * puddle);
+    // Water seen from above mostly shows what's under it: the sky only at a glancing angle,
+    // and in the drops' rings as they spread (no flat sky-coloured wash, which reads as paint).
+    let mirror = g.wet_sky.rgb * (fres * 0.2 * w * ground + (0.015 + 0.6 * fres + length(ring) * 0.35) * puddle);
+    // The sun's glint off wet ground and puddles (not off models: on leaves it speckles).
+    let h = normalize(v - g.light_dir.xyz);
+    let glint = pow(max(dot(nr, h), 0.0), 120.0) * (0.15 * w + 1.0 * puddle) * ground * cloud_shade(world);
+    return base + mirror + srgb_to_linear(g.diffuse.rgb) * glint;
+}
+
+// Raindrops landing: a ring spreading from each, one drop in every 5-unit cell about once a
+// second, each cell at its own place and beat. The slope of the rings (for a normal).
+fn drops(p: vec2<f32>, t: f32) -> vec2<f32> {
+    let size = 5.0;
+    let i0 = floor(p / size);
+    var slope = vec2(0.0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let c = i0 + vec2(f32(x), f32(y));
+            let h1 = drop_hash(c);
+            let h2 = drop_hash(c + vec2(31.0, 17.0));
+            let age = fract(t * 1.1 + h1 * 7.0 + h2 * 3.0);
+            let d = p - (c + vec2(h1, h2)) * size;
+            let r = length(d);
+            let off = r - age * size * 0.75;
+            let ring = (1.0 - age) * exp(-off * off / 0.4) * cos(off * 3.5);
+            slope += d / max(r, 1e-3) * ring;
+        }
+    }
+    return slope * 0.5;
+}
+
+fn drop_hash(i: vec2<f32>) -> f32 {
+    let v = vec2<u32>(vec2<i32>(i) + vec2(65536));
+    var h = v.x * 747796405u + v.y * 2891336453u + 99991u;
     h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
     h = (h >> 22u) ^ h;
     return f32(h & 0xffffu) / 65535.0;
