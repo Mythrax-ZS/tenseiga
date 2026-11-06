@@ -119,7 +119,7 @@ fn boss_spawns(text: &str) -> Vec<Spawn> {
 fn battle_setting(root: &Path, key: &str) -> Option<u32> {
     let read = |path: PathBuf| -> Option<u32> {
         let text = std::fs::read_to_string(path).ok()?;
-        text.lines().filter(|l| !l.trim_start().starts_with("//")).filter_map(|l| l.split_once(':')).filter(|(k, _)| k.trim() == key).filter_map(|(_, v)| v.trim().parse().ok()).last()
+        text.lines().filter(|l| !l.trim_start().starts_with("//")).filter_map(|l| l.split_once(':')).filter(|(k, _)| k.trim() == key).filter_map(|(_, v)| v.trim().parse().ok()).next_back()
     };
     read(root.join("conf/import/battle_conf.txt")).or_else(|| read(root.join("conf/battle/monster.conf")))
 }
