@@ -331,19 +331,22 @@ fn wet_surface(lit: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> v
     if w <= 0.001 || g.room.x > 0.5 {
         return lit;
     }
-    let field = cloud_noise(world.xz / 34.0) * 0.65 + cloud_noise(world.xz / 11.0 + vec2(7.1, 3.3)) * 0.35;
-    let fill = 0.68 - 0.07 * g.wet.x;
-    let puddle = smoothstep(fill, fill + 0.04, field) * w * smoothstep(0.9, 0.97, n.y) * ground;
+    // Puddles: small, scattered, on flat ground only.
+    let field = cloud_noise(world.xz / 15.0) * 0.6 + cloud_noise(world.xz / 5.5 + vec2(7.1, 3.3)) * 0.4;
+    let fill = 0.75 - 0.06 * g.wet.x;
+    let puddle = smoothstep(fill, fill + 0.05, field) * w * smoothstep(0.92, 0.98, n.y) * ground;
     let ring = drops(world.xz, g.params.x) * (0.08 + 0.45 * puddle) * g.wet.y * ground;
     let nr = normalize(vec3(n.x + ring.x, n.y, n.z + ring.y));
     let v = normalize(g.eye.xyz - world);
     let fres = pow(1.0 - max(dot(nr, v), 0.0), 5.0);
     // Soaked: darker (a little more on the ground), darker still under a puddle's water.
-    let base = lit * (1.0 - (0.22 + 0.13 * ground) * w) * (1.0 - 0.6 * puddle);
-    // The drops' rings catch the sky as they spread across a puddle.
-    let mirror = g.wet_sky.rgb * ((0.04 + fres) * 0.25 * w * ground + (0.12 + 0.5 * fres + length(ring) * 0.5) * puddle);
+    let base = lit * (1.0 - (0.22 + 0.13 * ground) * w) * (1.0 - 0.55 * puddle);
+    // Water seen from above mostly shows what's under it: the sky only at a glancing angle,
+    // and in the drops' rings as they spread (no flat sky-coloured wash, which reads as paint).
+    let mirror = g.wet_sky.rgb * (fres * 0.2 * w * ground + (0.015 + 0.6 * fres + length(ring) * 0.35) * puddle);
+    // The sun's glint off wet ground and puddles (not off models: on leaves it speckles).
     let h = normalize(v - g.light_dir.xyz);
-    let glint = pow(max(dot(nr, h), 0.0), 120.0) * (0.25 * w + 1.0 * puddle) * cloud_shade(world);
+    let glint = pow(max(dot(nr, h), 0.0), 120.0) * (0.15 * w + 1.0 * puddle) * ground * cloud_shade(world);
     return base + mirror + srgb_to_linear(g.diffuse.rgb) * glint;
 }
 
