@@ -29,6 +29,10 @@ pub const PROP: f32 = -2.0;
 const PROP_SPAN: f32 = 14.0;
 /// Triangles thinner than this (world units) are poles, posts and trim, never windows.
 const THIN: f32 = 1.5;
+/// The top of a building, this share of its height: its roof's ridge and the beams along
+/// it, never windows (a pale band along a ridge beam looks just like a row of panes, and
+/// windows sit below the eaves).
+const RIDGE: f32 = 0.12;
 
 /// A triangle's least height (twice its area over its longest side): small for a sliver of
 /// a pole however long it is, large for a pane of a window.
@@ -36,6 +40,18 @@ fn thinness(tri: &[Vertex; 3]) -> f32 {
     let [a, b, c] = tri.map(|v| Vec3::from(v.pos));
     let longest = (b - a).length().max((c - b).length()).max((a - c).length());
     (b - a).cross(c - a).length() / longest.max(1e-4)
+}
+
+/// Which of a model's triangles never show a lit window, marked so the shader leaves them
+/// dark: all of a prop's (banners, flags, lamp posts, signs, tents and anything small: blue
+/// cloth and paint can look just like glass), and on a building its thin pieces (poles,
+/// posts, railings, a spire) and the ridge atop its roof.
+fn never_lit(tris: &[(usize, [Vertex; 3])], file: &str) -> Vec<bool> {
+    let (lo, hi) = tris.iter().flat_map(|(_, tri)| tri.iter().map(|v| Vec3::from(v.pos))).fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
+    let span = (hi - lo).max(Vec3::ZERO);
+    let prop = span.x.max(span.z) < PROP_SPAN || no_windows(file);
+    let ridge = hi.y - span.y * RIDGE;
+    tris.iter().map(|(_, tri)| prop || thinness(tri) < THIN || tri.iter().all(|v| v.pos[1] > ridge)).collect()
 }
 
 /// Models whose names say they're cloth, signs or lamps (휘장 banner, 깃발 flag, 가로등
@@ -357,15 +373,9 @@ impl<'a> SceneBuilder<'a> {
         let Some(bend) = foliage(&inst.file) else {
             let mut tris = vec![];
             model_triangles(rsm, world, white, |t, tri| tris.push((t, tri)));
-            // Lit windows only on buildings: banners, flags, lamp posts, signs, tents and
-            // anything small are marked so the shader leaves them dark (blue cloth and paint
-            // can look just like glass).
-            let (lo, hi) = tris.iter().flat_map(|(_, tri)| tri.iter().map(|v| Vec3::from(v.pos))).fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
-            let span = (hi - lo).max(Vec3::ZERO);
-            let prop = span.x.max(span.z) < PROP_SPAN || no_windows(&inst.file);
-            for (t, mut tri) in tris {
-                // Thin pieces (poles, posts, railings, a spire) are never a window either.
-                if prop || thinness(&tri) < THIN {
+            let dark = never_lit(&tris, &inst.file);
+            for ((t, mut tri), dark) in tris.into_iter().zip(dark) {
+                if dark {
                     for v in &mut tri {
                         v.sway = PROP;
                     }
@@ -779,6 +789,19 @@ mod foliage_tests {
         }
         // Grass bends further (for its height) than a tree.
         assert!(foliage("bifrost\\풀01.rsm") > foliage("나무잡초꽃\\나무01.rsm"));
+    }
+
+    #[test]
+    fn a_roof_ridge_never_lights_but_the_walls_may() {
+        let v = |x: f32, y: f32, z: f32| super::Vertex { pos: [x, y, z], normal: [0.0; 3], uv: [0.0; 2], lightmap_uv: [0.0; 2], color: [1.0; 3], sway: 0.0 };
+        // A building 30 across and 20 high: a wall, the side of its ridge beam (the top
+        // two units), and a thin post.
+        let tris = [
+            (0, [v(0.0, 0.0, 0.0), v(30.0, 0.0, 0.0), v(30.0, 12.0, 0.0)]),
+            (0, [v(0.0, 18.2, 15.0), v(30.0, 18.2, 15.0), v(30.0, 20.0, 15.0)]),
+            (0, [v(0.0, 0.0, 30.0), v(0.5, 0.0, 30.0), v(0.5, 14.0, 30.0)]),
+        ];
+        assert_eq!(super::never_lit(&tris, "페이욘\\민가01.rsm"), [false, true, true]);
     }
 
     #[test]
