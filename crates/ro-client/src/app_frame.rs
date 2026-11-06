@@ -814,6 +814,15 @@ impl App {
             }
         }
         self.units.retain(|_, m| m.dying.is_none_or(|t| t > 0.0));
+        // The target frame lets go of a monster that died, left or has been left alone
+        // (unless we are still attacking it).
+        if let Some((id, last)) = self.focus {
+            let attacking = self.attack.is_some_and(|(t, _)| t == id);
+            if self.units.get(&id).is_none_or(|m| m.dying.is_some()) || (!attacking && !targetframe::keeps(last, std::time::Instant::now())) {
+                self.focus = None;
+            }
+        }
+        self.cast_skill.retain(|id, _| self.casts.contains_key(id));
         self.casts.retain(|_, (t, total)| {
             *t += dt;
             *t < *total
@@ -993,6 +1002,8 @@ impl App {
             .then(|| self.pick())
             .flatten()
             .filter(|&(x, y)| self.world.as_ref().and_then(|w| w.gat.as_ref()).is_some_and(|g| g.walkable(x as i32, y as i32)));
+        // What the target frame shows, worked out before the renderer is borrowed.
+        let target_shown = self.target_frame();
         let (Some(r), Some(window)) = (self.renderer.as_mut(), self.window.as_ref()) else { return };
         r.actors.clear();
         r.models.clear();
@@ -1930,6 +1941,9 @@ impl App {
                 if let Some(feet) = pad_marker {
                     hud::target_marker(ui.ctx(), feet, ppp, self.aiming.is_some());
                 }
+                if let Some(t) = &target_shown {
+                    targetframe::show(ui.ctx(), t);
+                }
                 // Arrange: the layout editor takes over from the settings window.
                 if std::mem::take(&mut self.settings.arrange) {
                     self.arrange.open = true;
@@ -2222,6 +2236,28 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
 
     /// Chat time stamps and the chat log follow Settings; the log is the current character's
     /// and gets the lines since the last frame, item links by name.
+    /// What the target frame (targetframe.rs) shows: the controller's target, else the
+    /// monster we are fighting; a stand-in while arranging the interface.
+    fn target_frame(&self) -> Option<targetframe::Target> {
+        if !self.settings.target_frame || self.front.is_some() {
+            return None;
+        }
+        let pad = self.pad_target.filter(|_| self.pad.in_use()).filter(|t| self.units.get(t).is_some_and(|m| m.kind == 5 && m.dying.is_none()));
+        let target = pad.or(self.focus.map(|(id, _)| id)).and_then(|id| self.units.get(&id).map(|m| (id, m)));
+        match target {
+            Some((id, m)) => {
+                let class = m.class as u16;
+                let cast = self.casts.get(&id).map(|&(t, total)| {
+                    let skill = self.cast_skill.get(&id).copied().unwrap_or(0);
+                    let name = self.skill_names.internal(skill).map_or_else(|| "a skill".to_string(), |i| self.skill_names.display(i));
+                    (name, t / total.max(1.0))
+                });
+                Some(targetframe::Target { name: m.name.clone(), info: mobinfo::line(class, m.level), rank: mobinfo::lookup(class).map_or(0, |i| i.rank), hp: m.hp, cast })
+            }
+            None => self.arrange.open.then(targetframe::Target::sample),
+        }
+    }
+
     fn sync_chat_log(&mut self) {
         self.hud.timestamps = self.settings.chat_timestamps;
         let name = &self.hud.status.name;

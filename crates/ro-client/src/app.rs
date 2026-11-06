@@ -3,6 +3,7 @@
 mod audio;
 mod chatlog;
 mod combat;
+mod targetframe;
 mod mobinfo;
 mod mobinfo_db;
 mod skillarea;
@@ -1185,6 +1186,10 @@ struct App {
     hotkey_row: u8,
     /// Casts in progress: caster -> (elapsed ms, total ms).
     casts: std::collections::HashMap<u32, (f32, f32)>,
+    /// The skill each cast in progress is of (for the target frame).
+    cast_skill: std::collections::HashMap<u32, u16>,
+    /// The monster the target frame shows and when we last traded blows with it.
+    focus: Option<(u32, std::time::Instant)>,
     fx: fx::FxLib,
     /// The current map's ambient effect emitters (RSW torches, bubbles, fireflies).
     map_fx: Vec<fx::MapEmitter>,
@@ -2274,6 +2279,7 @@ impl App {
         self.pending_skill = None;
         self.walk_goal = None;
         tracing::debug!(skill, level, target, "use skill");
+        self.focus_on(target);
         self.send(ro_net::Command::Stat(ro_net::StatRequest::UseSkill { skill, level, target }));
     }
 
@@ -2698,10 +2704,18 @@ impl App {
     }
 
     /// Attacks a monster until it dies or we pick something else.
+    /// The target frame turns to a monster we attack or cast on.
+    fn focus_on(&mut self, id: u32) {
+        if self.units.get(&id).is_some_and(|m| m.kind == 5) {
+            self.focus = Some((id, std::time::Instant::now()));
+        }
+    }
+
     fn attack_unit(&mut self, id: u32) {
         self.walk_goal = None;
         self.pending_npc = None;
         self.attack = Some((id, self.attack_range as i16));
+        self.focus_on(id);
         if let Some((tx, _)) = self.net.as_ref() {
             let _ = tx.send(ro_net::Command::Attack { target: id, keep: true });
         }
