@@ -57,7 +57,7 @@ impl Layer {
     }
 }
 
-const ELEMENTS: [Element; 9] = [
+const ELEMENTS: [Element; 10] = [
     Element { key: "status", name: "Character", layers: &[Layer::Area(Order::Middle, "basic_info"), Layer::Window("status")], pivot: Align2::LEFT_TOP },
     Element { key: "chat", name: "Chat", layers: &[Layer::Window("chat")], pivot: Align2::LEFT_BOTTOM },
     Element { key: "hotkeys", name: "Shortcut bar", layers: &[Layer::Area(Order::Middle, "hotkeys")], pivot: Align2::CENTER_BOTTOM },
@@ -65,6 +65,7 @@ const ELEMENTS: [Element; 9] = [
     Element { key: "minimap", name: "Minimap", layers: &[Layer::Area(Order::Middle, "minimap")], pivot: Align2::RIGHT_TOP },
     Element { key: "buffs", name: "Status effects", layers: &[Layer::Area(Order::Middle, "buffs")], pivot: Align2::RIGHT_TOP },
     Element { key: "cross bar", name: "Controller bar", layers: &[Layer::Area(Order::Middle, "cross bar")], pivot: Align2::CENTER_BOTTOM },
+    Element { key: "quests", name: "Quest tracker", layers: &[Layer::Area(Order::Middle, crate::quests::TRACKER_AREA)], pivot: Align2::LEFT_TOP },
     Element { key: "target", name: "Target", layers: &[Layer::Area(Order::Middle, crate::targetframe::AREA)], pivot: Align2::CENTER_TOP },
     Element { key: "perf", name: "Performance", layers: &[Layer::Area(Order::Foreground, "perf overlay")], pivot: Align2::CENTER_TOP },
 ];
