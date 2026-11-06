@@ -1765,6 +1765,7 @@ impl App {
                         self.queued_chat.push(format!("@gmlook {}", if on { "on" } else { "off" }));
                     }
                 }
+                self.combat.show(ui.ctx());
                 if let Some(k) = self.ranking.show(ui.ctx()) {
                     self.queued_commands.push(ro_net::Command::Ranking(k));
                 }

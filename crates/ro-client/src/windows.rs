@@ -929,6 +929,7 @@ impl Windows {
                                 ("Chat Room   Alt+K", "k"),
                                 ("Battle & Castles", "battle"),
                                 ("Achievements   Alt+Y", "y"),
+                                ("Combat Log   Alt+D", "d"),
                                 ("Attendance   Alt+J", "j"),
                             ] {
                                 if ui.selectable_label(false, label).clicked() {

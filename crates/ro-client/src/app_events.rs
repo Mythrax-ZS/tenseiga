@@ -889,6 +889,7 @@ impl App {
                     self.aggro.insert(act.src, act.target);
                 }
                 self.feel_act(&act);
+                self.log_combat(0, &act);
                 self.act(act)
             }
             OutOfRange { target, target_cell, range } => {
@@ -1633,6 +1634,7 @@ impl App {
                 if let (7015, Some(from), Some(to)) = (skill, self.unit_pos(act.src), self.unit_pos(target)) {
                     self.crescent_gale(act.src, from, to);
                 }
+                self.log_combat(skill, &act);
                 self.act(act);
                 self.skill_fx(skill, self.unit_pos(target), true);
             }

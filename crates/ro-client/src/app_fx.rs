@@ -195,6 +195,37 @@ impl App {
     }
 
     /// Someone acted on someone: animate both, and show what happened.
+    /// Puts a hit in the combat log and meter (combat.rs) when it is ours (us, our
+    /// homunculus, mercenary or elemental) or lands on us. `skill` 0 is a plain attack.
+    pub(crate) fn log_combat(&mut self, skill: u16, act: &ro_net::Act) {
+        // Sitting, standing and picking up come as acts too; skills that do no damage say -1.
+        if matches!(act.kind, 1..=3) || act.src == act.target || act.damage < 0 {
+            return;
+        }
+        let me = self.account_id;
+        let c = &self.companions;
+        let by = if act.src == me {
+            Some(combat::Source::Me)
+        } else if c.homun_id != 0 && act.src == c.homun_id {
+            Some(combat::Source::Homunculus)
+        } else if c.merc.as_ref().is_some_and(|m| m.id == act.src) {
+            Some(combat::Source::Mercenary)
+        } else if c.elem.as_ref().is_some_and(|e| e.id == act.src) {
+            Some(combat::Source::Elemental)
+        } else {
+            None
+        };
+        if by.is_none() && act.target != me {
+            return;
+        }
+        let name = |id: u32| self.units.get(&id).map(|m| m.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "?".into());
+        let other = if by.is_some() { name(act.target) } else { name(act.src) };
+        let skill_name = if skill == 0 { "Attack".to_string() } else { self.skill_names.internal(skill).map_or_else(|| format!("Skill #{skill}"), |i| self.skill_names.display(i)) };
+        let damage = if act.kind == 11 { 0 } else { act.damage + act.left_damage };
+        let hit = combat::Hit { by, skill, skill_name, other, damage, hits: act.hits.max(1) as u16, crit: act.kind == 10, stamp: chrono::Local::now().format("%H:%M:%S").to_string() };
+        self.combat.record(hit, std::time::Instant::now());
+    }
+
     pub(crate) fn act(&mut self, act: ro_net::Act) {
         let me = self.account_id;
         let cell_of = |app: &Self, id: u32| -> Option<(i32, i32)> {
