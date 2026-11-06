@@ -1617,7 +1617,10 @@ impl App {
                     if let (Some(t), true) = (target_cell, src != target) {
                         m.face(t);
                     }
-                    m.set_pose(Pose::Attack, 400.0);
+                    // A skill that deals no damage (a buff, a heal, a support skill): characters
+                    // play their casting motion, as the original client does; monsters, which
+                    // have none, their attack.
+                    m.set_pose(if m.human { Pose::Cast } else { Pose::Attack }, 400.0);
                 }
                 if skill == 406 {
                     self.meteor_assault(src);
