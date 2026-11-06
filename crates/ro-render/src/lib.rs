@@ -219,6 +219,8 @@ pub struct Renderer {
     repeat_sampler: wgpu::Sampler,
     water: Option<water::Water>,
     sprite_pipeline: wgpu::RenderPipeline,
+    /// Actors with a silhouette, drawn again where the scene hides them.
+    silhouette_pipeline: wgpu::RenderPipeline,
     sprite_layout: wgpu::BindGroupLayout,
     sheets: Vec<sprite::Sheet>,
     ui_renderer: egui_wgpu::Renderer,
@@ -648,6 +650,36 @@ impl Renderer {
             &[Some(sprite::Vertex::layout())],
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
         );
+        let silhouette_pipeline = {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("silhouette"), source: wgpu::ShaderSource::Wgsl(include_str!("sprite.wgsl").into()) });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("silhouette"), bind_group_layouts: &[Some(&globals_layout), Some(&sprite_layout)], ..Default::default() });
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("silhouette"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_silhouette"), compilation_options: Default::default(), buffers: &[Some(sprite::Vertex::layout())] },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    // Only where something stands in front of it.
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_silhouette"),
+                    compilation_options: Default::default(),
+                    targets: &[
+                        Some(wgpu::ColorTargetState { format: post::HDR_FORMAT, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL }),
+                        Some(wgpu::ColorTargetState { format: post::INFO_FORMAT, blend: None, write_mask: wgpu::ColorWrites::empty() }),
+                    ],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
         let fx_pipeline = pipeline(
             "str effects",
             include_str!("strfx.wgsl"),
@@ -702,6 +734,7 @@ impl Renderer {
             repeat_sampler,
             water: None,
             sprite_pipeline,
+            silhouette_pipeline,
             sprite_layout,
             sheets: vec![],
             ui_renderer,
@@ -1567,13 +1600,22 @@ impl Renderer {
         let mut sprite_vertices = vec![];
         let mut sprite_draws = vec![];
         let blobs: std::collections::HashSet<usize> = self.actors.iter().filter_map(|a| a.shadow.map(|s| s.0)).collect();
+        // Silhouettes: the same quads (not the blob shadows), coloured.
+        let mut silhouette_vertices = vec![];
+        let mut silhouette_draws = vec![];
         for a in order {
             for (sheet, v) in sprite::actor_quads(&self.sheets, a) {
+                if let (Some(c), false) = (a.silhouette, blobs.contains(&sheet)) {
+                    let start = silhouette_vertices.len() as u32;
+                    silhouette_vertices.extend(v.iter().map(|q| sprite::Vertex { color: [c[0], c[1], c[2], q.color[3]], ..*q }));
+                    silhouette_draws.push((sheet, start..silhouette_vertices.len() as u32));
+                }
                 let start = sprite_vertices.len() as u32;
                 sprite_vertices.extend(v);
                 sprite_draws.push((sheet, start..sprite_vertices.len() as u32));
             }
         }
+        let silhouette_buffer = (!silhouette_vertices.is_empty()).then(|| sprite::vertex_buffer(&self.device, &silhouette_vertices));
         let sprite_buffer = (!sprite_vertices.is_empty()).then(|| sprite::vertex_buffer(&self.device, &sprite_vertices));
         let mut enc = self.device.create_command_encoder(&Default::default());
         // Sun shadows: every sprite layer except the round blob shadows under actors.
@@ -1732,6 +1774,15 @@ impl Renderer {
                 }
                 pass.set_vertex_buffer(0, buffer.slice(..));
                 for (sheet, range) in &sprite_draws {
+                    pass.set_bind_group(1, &self.sheets[*sheet].bind, &[]);
+                    pass.draw(range.clone(), 0..1);
+                }
+            }
+            // Silhouettes of those hidden behind walls and buildings.
+            if let Some(buffer) = &silhouette_buffer {
+                pass.set_pipeline(&self.silhouette_pipeline);
+                pass.set_vertex_buffer(0, buffer.slice(..));
+                for (sheet, range) in &silhouette_draws {
                     pass.set_bind_group(1, &self.sheets[*sheet].bind, &[]);
                     pass.draw(range.clone(), 0..1);
                 }

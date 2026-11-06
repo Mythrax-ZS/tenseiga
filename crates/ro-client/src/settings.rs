@@ -152,6 +152,8 @@ pub struct Visual {
     pub heat_haze: bool,
     /// At night: windows glowing warm, fireflies on green maps.
     pub night_lights: bool,
+    /// Ourselves, party members and the target shown through walls in front of them.
+    pub silhouettes: bool,
 }
 
 impl Default for Visual {
@@ -171,6 +173,7 @@ impl Default for Visual {
             foliage_sway: 0.7,
             heat_haze: true,
             night_lights: true,
+            silhouettes: true,
             warmth: p.warmth,
             saturation: p.saturation,
             contrast: p.contrast,
@@ -562,6 +565,9 @@ impl Settings {
         ui.end_row();
         ui.label("Night lights").on_hover_text("At night, windows glow warm and fireflies come out on green maps");
         ui.checkbox(&mut v.night_lights, "");
+        ui.end_row();
+        ui.label("Silhouettes").on_hover_text("You, your party and your target show through walls and buildings in front of them");
+        ui.checkbox(&mut v.silhouettes, "");
         ui.end_row();
         section(ui, "Look");
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Vignette"));

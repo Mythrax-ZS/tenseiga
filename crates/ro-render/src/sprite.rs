@@ -89,6 +89,9 @@ pub struct Actor {
     pub scale: f32,
     /// Colour multiplier for the sprite (not its shadow); [1, 1, 1] leaves it as drawn.
     pub tint: [f32; 3],
+    /// Shown through walls and buildings in front of it as a soft shape of this colour
+    /// (the player, party members, the target); None for everyone else.
+    pub silhouette: Option<[f32; 3]>,
 }
 
 pub(crate) struct Sheet {
