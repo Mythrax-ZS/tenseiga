@@ -245,10 +245,10 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     let heat = p.water.w;
     if heat > 0.0 {
         let far = textureSample(info, samp, in.uv).x;
-        let reach = 0.3 + 0.7 * smoothstep(p.depth.x * 0.7, p.depth.x * 1.8, far);
+        let reach = 0.55 + 0.45 * smoothstep(p.depth.x * 0.7, p.depth.x * 1.8, far);
         let q = vec2(in.uv.x * p.water.z * 34.0, in.uv.y * 52.0 + secs * 2.2);
         let wob = vec2(noise2(q) - 0.5, noise2(q * 1.7 + vec2(13.1, secs * 1.1)) - 0.5);
-        uv += wob * vec2(0.0016, 0.0026) * heat * reach;
+        uv += wob * vec2(0.0042, 0.0068) * heat * reach;
     }
     let inf = textureSample(info, samp, uv);
     let depth = inf.x;
