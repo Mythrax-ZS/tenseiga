@@ -176,12 +176,14 @@ impl Particles {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("particles"),
             layout: Some(&self.layout),
-            vertex: wgpu::VertexState { module: &self.shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[Some(Vertex::layout())] },
+            // `zenable` 0: still hidden by what stands in front, but tested a little nearer
+            // the camera so the particles don't cut into the surface they rise from.
+            vertex: wgpu::VertexState { module: &self.shader, entry_point: Some(if z { "vs_main" } else { "vs_pulled" }), compilation_options: Default::default(), buffers: &[Some(Vertex::layout())] },
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: crate::DEPTH_FORMAT,
                 depth_write_enabled: Some(false),
-                depth_compare: Some(if z { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always }),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
