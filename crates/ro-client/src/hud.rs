@@ -75,6 +75,8 @@ pub struct Label {
     /// Window pixels per sprite pixel at the actor (`Renderer::sprite_pixel`): the spheres
     /// keep to the sprite's head at any zoom.
     pub sprite_px: f32,
+    /// A smaller line under the name, in its own colour (a monster's info, see mobinfo).
+    pub detail: Option<(String, Color32)>,
 }
 
 #[derive(Default)]
@@ -311,7 +313,15 @@ impl Hud {
                 let r = egui::Rect::from_min_size(egui::pos2(pos.x - w / 2.0 - 22.0, pos.y - 2.0), Vec2::splat(18.0));
                 painter.image(e, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
             }
-            painter.text(pos, Align2::CENTER_TOP, &l.text, font, l.color);
+            let name = painter.text(pos, Align2::CENTER_TOP, &l.text, font, l.color);
+            if let Some((detail, color)) = &l.detail {
+                let at = egui::pos2(pos.x, name.max.y + 1.0);
+                let small = FontId::proportional(11.0);
+                for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+                    painter.text(at + Vec2::new(dx, dy), Align2::CENTER_TOP, detail, small.clone(), Color32::BLACK);
+                }
+                painter.text(at, Align2::CENTER_TOP, detail, small, *color);
+            }
             if l.orbs > 0 {
                 // Spheres circling over the head, as the original draws them. Sized in sprite
                 // pixels: a fixed offset in window points sat at the waist when zoomed in.

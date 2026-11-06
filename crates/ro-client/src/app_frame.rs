@@ -167,6 +167,12 @@ impl App {
                         }
                         None
                     }
+                    // pointmob[:class]: the pointer stays on the monster nearest us (of that
+                    // class if given), for captures of what hovering one shows.
+                    Some(("pointmob", class)) => {
+                        self.point_mob = Some(class.parse().unwrap_or(0));
+                        None
+                    }
                     Some(("walk", xy)) => {
                         if let Some((x, y)) = xy.split_once('_').and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?))) {
                             self.request_walk((x, y));
@@ -977,6 +983,9 @@ impl App {
             self.request_walk(cell);
         }
         // The unit and the floor item under the cursor (a monster's or an item's name shows only then).
+        if let Some(class) = self.point_mob {
+            self.point_at_mob(class);
+        }
         let hovered = self.pick_unit();
         let hovered_item = self.pick_floor_item();
         // The walkable cell under the mouse, marked on the ground as the original does.
@@ -1340,7 +1349,9 @@ impl App {
                 let emblem = (m.guild != 0).then(|| self.emblems.get(&m.guild).cloned().flatten()).flatten().map(|t| t.id());
                 let (orbs, orb_kind) = self.spirits.get(&uid).copied().unwrap_or((0, 0));
                 let sprite_px = r.sprite_pixel(m.actor.pos, size).unwrap_or(1.0);
-                labels.push(hud::Label { feet, text, color, emblem, orbs, orb_kind, sprite_px });
+                // A monster under the cursor: its level, element, race and size.
+                let detail = (m.kind == 5 && hovered == Some(uid) && self.settings.monster_info).then(|| mobinfo::line(m.class as u16, m.level)).flatten();
+                labels.push(hud::Label { feet, text, color, emblem, orbs, orb_kind, sprite_px, detail });
             }
         }
         // A floor item's name, as the original: "Jellopy: 3 ea." (msgstringtable 183).
@@ -1352,7 +1363,7 @@ impl App {
                 let name = self.item_db.as_ref().map_or_else(|| format!("Item #{}", f.item), |d| d.name(f.item, f.identified));
                 let amount = f.amount.max(1).to_string();
                 let text = msgstr::get(183, &[&name, &amount]).unwrap_or_else(|| format!("{name}: {amount} ea."));
-                labels.push(hud::Label { feet, text, color: egui::Color32::WHITE, emblem: None, orbs: 0, orb_kind: 0, sprite_px: 1.0 });
+                labels.push(hud::Label { feet, text, color: egui::Color32::WHITE, emblem: None, orbs: 0, orb_kind: 0, sprite_px: 1.0, detail: None });
             }
         }
         let floaters: Vec<_> = self.floaters.iter().filter_map(|(pos, text, color, age)| Some((r.project(*pos, size)?, text.clone(), *color, *age))).collect();

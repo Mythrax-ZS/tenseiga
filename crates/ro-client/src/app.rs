@@ -2,6 +2,8 @@
 
 mod audio;
 mod chatlog;
+mod mobinfo;
+mod mobinfo_db;
 mod skillarea;
 mod skillarea_db;
 mod photo;
@@ -1361,6 +1363,9 @@ struct App {
     queued_action: Option<windows::UiAction>,
     /// A pointer move the test script queued (UI points); egui keeps the position.
     fake_pointer: Option<egui::Pos2>,
+    /// Test hook (`pointmob[:class]`): the pointer stays on the nearest monster (of that
+    /// class, 0 any), every frame.
+    point_mob: Option<i16>,
     /// A click the test script queued there; pressed one frame, released the next.
     fake_click: Option<(egui::Pos2, bool)>,
     /// Test drags: pointer events played one frame at a time.
