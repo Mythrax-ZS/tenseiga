@@ -180,7 +180,7 @@ impl Model3d {
             for &i in &m.indices {
                 let i = i as usize;
                 let Some(&(p, n)) = posed.get(i) else { continue };
-                out[slot].1.push(Vertex { pos: p.into(), normal: n.into(), uv: m.uvs.get(i).copied().unwrap_or_default(), lightmap_uv: [0.5, 0.5], color: tint });
+                out[slot].1.push(Vertex { pos: p.into(), normal: n.into(), uv: m.uvs.get(i).copied().unwrap_or_default(), lightmap_uv: [0.5, 0.5], color: tint, sway: 0.0 });
             }
         }
         out

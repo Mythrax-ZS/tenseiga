@@ -212,7 +212,7 @@ mod tests {
     use super::*;
 
     fn tri(z: f32) -> [Vertex; 3] {
-        [0.0, 1.0, 2.0].map(|u| Vertex { pos: [u, 0.0, z], normal: [0.0; 3], uv: [u, z], lightmap_uv: [0.0; 2], color: [1.0; 3] })
+        [0.0, 1.0, 2.0].map(|u| Vertex { pos: [u, 0.0, z], normal: [0.0; 3], uv: [u, z], lightmap_uv: [0.0; 2], color: [1.0; 3], sway: 0.0 })
     }
 
     #[test]

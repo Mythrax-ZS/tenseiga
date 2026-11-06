@@ -15,11 +15,13 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub lightmap_uv: [f32; 2],
     pub color: [f32; 3],
+    /// How far this vertex sways in the wind at most (world units; 0 for all but foliage).
+    pub sway: f32,
 }
 
 impl Vertex {
-    const ATTRS: [wgpu::VertexAttribute; 5] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x2, 4 => Float32x3];
+    const ATTRS: [wgpu::VertexAttribute; 6] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x2, 4 => Float32x3, 5 => Float32];
 
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -306,7 +308,7 @@ impl<'a> SceneBuilder<'a> {
             _ => self.atlas.uvs(Some(s.lightmap)),
         };
         let color = [s.color[2] as f32 / 255.0, s.color[1] as f32 / 255.0, s.color[0] as f32 / 255.0];
-        let v = |i: usize| Vertex { pos: p[i].into(), normal: normals[i].into(), uv: [s.u[i], s.v[i]], lightmap_uv: lm[i], color: colors.map_or(color, |c| c[i]) };
+        let v = |i: usize| Vertex { pos: p[i].into(), normal: normals[i].into(), uv: [s.u[i], s.v[i]], lightmap_uv: lm[i], color: colors.map_or(color, |c| c[i]), sway: 0.0 };
         self.per_tex[t].extend([v(0), v(1), v(3), v(0), v(3), v(2)]);
     }
 
@@ -324,11 +326,29 @@ impl<'a> SceneBuilder<'a> {
 
         let white = self.atlas.white();
         let tex: Vec<usize> = rsm.textures.iter().map(|t| self.texture(t)).collect();
-        model_triangles(rsm, world, white, |t, tri| {
+        let Some(bend) = foliage(&inst.file) else {
+            model_triangles(rsm, world, white, |t, tri| {
+                if let Some(&t) = tex.get(t) {
+                    self.per_tex[t].extend(tri);
+                }
+            });
+            return;
+        };
+        // Foliage sways in the wind: rooted at its foot, swaying more the higher up it is
+        // (`bend` of its height at the very top).
+        let mut tris = vec![];
+        model_triangles(rsm, world, white, |t, tri| tris.push((t, tri)));
+        let (lo, hi) = tris.iter().flat_map(|(_, tri)| tri.iter().map(|v| v.pos[1])).fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+        let height = (hi - lo).max(1.0);
+        for (t, mut tri) in tris {
+            for v in &mut tri {
+                let up = ((v.pos[1] - lo) / height).clamp(0.0, 1.0);
+                v.sway = up.powf(1.6) * height * bend;
+            }
             if let Some(&t) = tex.get(t) {
                 self.per_tex[t].extend(tri);
             }
-        });
+        }
     }
 
     pub fn finish(self) -> SceneMesh {
@@ -508,6 +528,40 @@ impl Heights {
     }
 }
 
+/// Whether a map model is foliage that sways in the wind, by its file's name (RO names them
+/// for what they are: 나무 trees, 풀 grass, 덤불 bushes, 꽃 flowers, 갈대 reeds, 야자 palms,
+/// 넝쿨 vines; and the 나무잡초꽃 "trees, weeds, flowers" folder), and how far: the share of
+/// its height its top moves at most. Grass and flowers bend more than trees.
+pub fn foliage(file: &str) -> Option<f32> {
+    let file = file.replace('/', "\\").to_lowercase();
+    let (dir, name) = file.rsplit_once('\\').unwrap_or(("", &file));
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    // Without the numbering: 나무01, flower_e_02, 국경-갈대03.
+    let stem = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_' || c == '-' || c == ' ');
+    let stem = stem.strip_suffix("_a").or_else(|| stem.strip_suffix("_b")).unwrap_or(stem).trim_end_matches(|c: char| c.is_ascii_digit() || c == '_' || c == '-');
+    let has = |words: &[&str]| words.iter().any(|w| stem.contains(w));
+    // Things made of wood (나무 is also "wooden") and buildings with flowers in their name.
+    let wooden = ["그릇_", "의자_", "상자", "선반", "울타리", "기둥", "다리", "판", "받침", "바침", "창문", "가로등", "통", "조각", "장식", "벽", "입구", "던전", "식탁", "의자", "뿌리", "밑둥", "줄기"];
+    let building = ["전망대", "기둥", "벽", "꽃이", "등", "주렴", "화분"];
+    let grassy = ["풀", "grass", "갈대", "reed", "꽃", "flower", "잡초"];
+    if has(&["화분", "pot", "basket"]) {
+        return None;
+    }
+    if has(&grassy) && !has(&building) {
+        return Some(0.14);
+    }
+    if has(&["덤불", "bush", "넝쿨", "덩굴", "덩쿨", "잎", "leaf"]) && !has(&["민가", "벽"]) {
+        return Some(0.09);
+    }
+    if has(&["tree", "palm", "야자", "버드나무"]) || (stem.ends_with("나무") && !has(&wooden)) {
+        return Some(0.07);
+    }
+    if dir.ends_with("나무잡초꽃") && !has(&wooden) {
+        return Some(0.08);
+    }
+    None
+}
+
 /// Triangles of an RSM placed by `world` (RO space, y down; output y up), each with the index
 /// of its texture in `rsm.textures`.
 fn model_triangles(rsm: &Rsm, world: Mat4, lightmap_uv: [f32; 2], mut out: impl FnMut(usize, [Vertex; 3])) {
@@ -537,7 +591,7 @@ fn model_triangles(rsm: &Rsm, world: Mat4, lightmap_uv: [f32; 2], mut out: impl 
                 continue;
             };
             let flat = face_normal(f);
-            let mut tri = [Vertex { pos: [0.0; 3], normal: [0.0; 3], uv: [0.0; 2], lightmap_uv, color: [1.0; 3] }; 3];
+            let mut tri = [Vertex { pos: [0.0; 3], normal: [0.0; 3], uv: [0.0; 2], lightmap_uv, color: [1.0; 3], sway: 0.0 }; 3];
             for k in 0..3 {
                 let vi = f.vertices[k];
                 let Some(&p) = pos.get(vi as usize) else { continue };
@@ -644,4 +698,21 @@ pub(crate) fn upload_levels(device: &wgpu::Device, queue: &wgpu::Queue, levels: 
         );
     }
     tex.create_view(&Default::default())
+}
+
+#[cfg(test)]
+mod foliage_tests {
+    use super::foliage;
+
+    #[test]
+    fn foliage_is_told_by_its_name() {
+        for f in ["나무잡초꽃\\나무01.rsm", "프론테라\\프론_나무01.rsm", "페이욘\\소나무.rsm", "graywolf\\tree_e_01.rsm2", "bifrost\\풀01.rsm", "나무잡초꽃\\국경-갈대02.rsm", "aurora\\flower_e_01.rsm2", "모로코\\야자수01.rsm", "bifrost\\덤불03.rsm", "나무잡초꽃\\잡초01.rsm"] {
+            assert!(foliage(f).is_some(), "{f} sways");
+        }
+        for f in ["bifrost\\그릇_나무01.rsm", "bifrost\\의자_나무.rsm", "프론테라\\나무상자01.rsm", "bifrost\\꽃전망대01.rsm", "graywolf\\flowerpot_s_01.rsm", "내부소품\\책꽃이01.rsm", "휘겔\\휘겔_나무통01.rsm", "프론테라\\민가01.rsm", "나무잡초꽃\\나무다리.rsm"] {
+            assert!(foliage(f).is_none(), "{f} stays still");
+        }
+        // Grass bends further (for its height) than a tree.
+        assert!(foliage("bifrost\\풀01.rsm") > foliage("나무잡초꽃\\나무01.rsm"));
+    }
 }

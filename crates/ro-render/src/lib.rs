@@ -81,6 +81,8 @@ struct Globals {
     /// Wet ground: x how wet (0..1), y how hard it rains now (drop rings); the sky's colour.
     wet: [f32; 4],
     wet_sky: [f32; 4],
+    /// Wind for swaying foliage: xy its direction (unit, world xz), z how strong (0 still).
+    wind: [f32; 4],
 }
 
 /// Torches near the player that cast sprite shadows, each with a shadow map.
@@ -272,6 +274,8 @@ pub struct Renderer {
     pub weather: Vec<WeatherLayer>,
     /// STR effects playing this frame; the client advances and removes them.
     pub effects: Vec<Fx>,
+    /// Foliage swaying in the wind (0 still .. 1 lively); the weather makes it blow harder.
+    pub foliage_sway: f32,
     /// A lightning flash lighting the map this frame (0 none .. about 1): the game sets it
     /// while a storm flashes. Outdoors only.
     pub lightning: f32,
@@ -728,6 +732,7 @@ impl Renderer {
             cloud_shadows: 0.0,
             wetness: 0.0,
             lightning: 0.0,
+            foliage_sway: 0.0,
             effects: vec![],
             show_effects: true,
             effect_pipeline,
@@ -1136,6 +1141,29 @@ impl Renderer {
         (self.config.width, self.config.height)
     }
 
+    /// The globals' wind for swaying foliage: a breeze (`foliage_sway`), stronger in the
+    /// weather (rain and storms most), from the same quarter the clouds come from.
+    fn wind_globals(&self) -> [f32; 4] {
+        if self.foliage_sway <= 0.0 {
+            return [0.0; 4];
+        }
+        let mut gale = 1.0;
+        if self.show_effects {
+            for w in &self.weather {
+                let s = w.strength.clamp(0.0, 1.0);
+                gale += s * match w.kind {
+                    WeatherKind::Rain => 1.2,
+                    WeatherKind::Clouds => 0.4,
+                    WeatherKind::Snow => 0.3,
+                    WeatherKind::Leaves | WeatherKind::Petals => 0.3,
+                    WeatherKind::Fog => -0.3,
+                };
+            }
+        }
+        let dir = glam::Vec2::new(1.0, 0.35).normalize();
+        [dir.x, dir.y, self.foliage_sway * gale, 0.0]
+    }
+
     /// How hard it rains on this map now (0..1): outdoors, with effects shown.
     fn raining(&self) -> f32 {
         if !self.show_effects || self.room.is_some() || self.underwater > 0.0 || self.sky_profile.is_none() {
@@ -1473,6 +1501,7 @@ impl Renderer {
             torch: std::array::from_fn(|i| torches.get(i).map_or([0.0; 4], |(l, _)| l.pos.extend(l.range).to_array())),
             torch_k: [torches.first().map_or(0.0, |t| t.1), torches.get(1).map_or(0.0, |t| t.1), 1.0 / shadow::TORCH_SIZE as f32, 0.0],
             clouds: self.cloud_globals(),
+            wind: self.wind_globals(),
             wet: [if self.post_settings.enabled { self.wetness } else { 0.0 }, self.raining(), 0.0, 0.0],
             wet_sky: match self.sky_profile.as_ref() {
                 Some(p) => {
