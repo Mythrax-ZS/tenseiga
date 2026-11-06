@@ -1472,6 +1472,8 @@ struct App {
     step_count: u32,
     /// Photo mode (Ctrl+P): the world still, the interface away, the camera free.
     photo: Option<photo::Photo>,
+    /// --pose action,frame,facing (for captures): into photo mode once a map shows, posed so.
+    pose_arg: Option<(usize, usize, usize)>,
     /// A map the loader finished (its files' name), for enter_map to use.
     preloaded: Option<(String, anyhow::Result<LoadedMap>)>,
     /// The window has keyboard focus (off: Settings' background frame rate applies).

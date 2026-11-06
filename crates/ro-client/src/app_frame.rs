@@ -21,6 +21,14 @@ impl App {
         if self.photo.as_ref().is_some_and(|p| p.leaving) {
             self.leave_photo();
         }
+        if let (Some((pose, frame, facing)), true) = (self.pose_arg, self.world.is_some() && self.photo.is_none()) {
+            self.pose_arg = None;
+            self.toggle_photo();
+            if let Some(p) = self.photo.as_mut() {
+                p.panel = false;
+                p.posing = photo::Posing { on: true, pose, frame, facing, ..Default::default() };
+            }
+        }
         if let (Some(p), Some(r)) = (self.photo.as_mut(), self.renderer.as_mut()) {
             p.fly(dt, &mut r.camera);
         }
@@ -1075,6 +1083,11 @@ impl App {
                     }
                 }
                 let mut a = p.update(dt, w, octant, idle);
+                // Photo mode: posed as chosen.
+                if let Some(ph) = self.photo.as_mut() {
+                    let body = a.body;
+                    ph.posing.apply(&mut a, p.attack_group, |index| r.action_frames(body, index));
+                }
                 a.silhouette = self.settings.visual.silhouettes.then_some(SILHOUETTE_SELF);
                 tracing::trace!(x = a.pos.x / ro_render::CELL, z = a.pos.z / ro_render::CELL, dt, cell = ?p.walker.cell, next = ?p.walker.next(), "walk trace");
                 if self.photo.is_none() {

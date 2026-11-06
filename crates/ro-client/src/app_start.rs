@@ -324,6 +324,7 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         steps: Default::default(),
         step_count: 0,
         photo: None,
+        pose_arg: arg("--pose").and_then(|p| photo::parse_pose(&p)),
         weather: weather::Weather::with_forced(arg("--weather").map(|w| w.split(',').filter_map(weather_kind).collect()).unwrap_or_default()),
         preloaded: None,
         capture: arg("--capture").map(|p| {

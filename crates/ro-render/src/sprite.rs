@@ -151,6 +151,11 @@ impl Sheet {
         self.action(action).map_or(0.0, |a| a.delay_ms.max(1.0) * a.frames.len() as f32)
     }
 
+    /// How many frames `action` has, and how long each shows (ms).
+    pub fn action_frames(&self, action: usize) -> (usize, f32) {
+        self.action(action).map_or((0, 0.0), |a| (a.frames.len(), a.delay_ms.max(1.0)))
+    }
+
     /// Frame index of `action` at `time_ms`, looping.
     fn frame_index(&self, action: usize, time_ms: f32, once: bool) -> usize {
         self.action(action).map_or(0, |a| {
