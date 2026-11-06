@@ -174,7 +174,9 @@ fn fs_main(in: VsOut) -> FsOut {
     let pl = point_light(in.world, n);
     // The torch light baked into the lightmap wavers with the flame.
     let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) * (1.0 + pl.w) + srgb_to_linear(t.rgb * in.color) * pl.rgb) * torch_shadows(in.world);
-    let glow = window_glow(in.uv, ddx, ddy, flat, max(ground, in.kind.y));
+    // (Paper screens and white panes are bright already: less glow on them keeps the light
+    // warm rather than washing out to white.)
+    let glow = window_glow(in.uv, ddx, ddy, flat, max(ground, in.kind.y)) * (1.0 - 0.55 * dot(t.rgb, vec3(0.299, 0.587, 0.114)));
     return FsOut(vec4(wet_surface(lit, in.world, flat, ground) + glow, 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
 }
 
