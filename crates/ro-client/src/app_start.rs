@@ -262,6 +262,7 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         packages: Default::default(),
         queued_action: None,
         fake_pointer: None,
+        point_mob: None,
         fake_click: None,
         fake_frames: Default::default(),
         social: Default::default(),

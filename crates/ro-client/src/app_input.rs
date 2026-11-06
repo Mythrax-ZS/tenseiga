@@ -879,6 +879,16 @@ impl App {
     }
 
     /// The NPC or monster under the cursor, nearest to the camera first.
+    /// Test hook: the pointer on the monster nearest us (of `class`, 0 any), mid-body.
+    pub(crate) fn point_at_mob(&mut self, class: i16) {
+        let me = self.player.as_ref().map(|p| p.walker.cell);
+        let dist = |c: (i32, i32)| me.map_or(0, |m| (c.0 - m.0).abs().max((c.1 - m.1).abs()));
+        let near = self.units.values().filter(|m| m.kind == 5 && m.dying.is_none() && (class == 0 || m.class == class)).min_by_key(|m| dist(m.walker.cell)).map(|m| m.actor.pos);
+        if let (Some(pos), Some(r)) = (near, self.renderer.as_ref()) {
+            self.cursor = r.project(pos + glam::Vec3::Y * ro_render::CELL * 0.8, r.size()).map(|p| (p.x as f64, p.y as f64));
+        }
+    }
+
     pub(crate) fn pick_unit(&self) -> Option<u32> {
         let (r, (cx, cy)) = (self.renderer.as_ref()?, self.cursor?);
         let size = r.size();
