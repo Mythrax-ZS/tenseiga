@@ -150,6 +150,8 @@ pub struct Visual {
     pub foliage_sway: f32,
     /// The air shimmering over deserts and volcanoes by day.
     pub heat_haze: bool,
+    /// At night: windows glowing warm, fireflies on green maps.
+    pub night_lights: bool,
 }
 
 impl Default for Visual {
@@ -168,6 +170,7 @@ impl Default for Visual {
             cloud_shadows: 0.6,
             foliage_sway: 0.7,
             heat_haze: true,
+            night_lights: true,
             warmth: p.warmth,
             saturation: p.saturation,
             contrast: p.contrast,
@@ -556,6 +559,9 @@ impl Settings {
         ui.end_row();
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Heat haze")).inner.on_hover_text("The air shimmers over deserts and volcanoes by day");
         ui.add_enabled(v.hd2d, egui::Checkbox::without_text(&mut v.heat_haze));
+        ui.end_row();
+        ui.label("Night lights").on_hover_text("At night, windows glow warm and fireflies come out on green maps");
+        ui.checkbox(&mut v.night_lights, "");
         ui.end_row();
         section(ui, "Look");
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Vignette"));

@@ -40,6 +40,8 @@ struct Globals {
     wet_sky: vec4<f32>,
     // Wind for swaying foliage: xy its direction (unit, world xz), z how strong (0 still).
     wind: vec4<f32>,
+    // Night: x how much the windows glow (0 by day).
+    night: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -165,7 +167,8 @@ fn fs_main(in: VsOut) -> FsOut {
     let pl = point_light(in.world, n);
     // The torch light baked into the lightmap wavers with the flame.
     let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) * (1.0 + pl.w) + srgb_to_linear(t.rgb * in.color) * pl.rgb) * torch_shadows(in.world);
-    return FsOut(vec4(wet_surface(lit, in.world, flat, ground), 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
+    let glow = window_glow(t.rgb, in.world, flat, ground);
+    return FsOut(vec4(wet_surface(lit, in.world, flat, ground) + glow, 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
 }
 
 // Surface relief: the texture's own brightness read as height (pale stone stands out of dark
@@ -396,6 +399,30 @@ fn sway(p: vec3<f32>, reach: f32) -> vec3<f32> {
     let k = reach * min(g.wind.z, 2.5);
     // Bending over, the top dips a little.
     return (dir * bend + side * flutter * 0.6 + vec3(0.0, flutter * 0.3 - bend * bend * 0.15, 0.0)) * k;
+}
+
+// Lit windows at night: on the walls of buildings (models, facing sideways), texels that
+// read as glass (dark, and bluer than they are red or green) glow warm, as if lamps burned
+// inside. Not every window: each 8-unit patch of wall is lit or dark by a hash, and the lit
+// ones flicker very gently, like lamplight.
+fn window_glow(tex: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
+    let k = g.night.x;
+    if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.35 {
+        return vec3(0.0);
+    }
+    let lum = dot(tex, vec3(0.299, 0.587, 0.114));
+    let blue = tex.b - max(tex.r, tex.g);
+    let glass = smoothstep(0.015, 0.08, blue) * (1.0 - smoothstep(0.25, 0.45, lum));
+    if glass <= 0.0 {
+        return vec3(0.0);
+    }
+    let pane = floor(world / 8.0);
+    let h = cloud_hash(pane.xz + vec2(pane.y * 7.0, pane.y * 13.0));
+    if h > 0.6 {
+        return vec3(0.0);
+    }
+    let flicker = 0.92 + 0.08 * sin(g.params.x * (2.0 + h * 3.0) + h * 40.0);
+    return vec3(1.0, 0.62, 0.28) * glass * k * flicker * (2.4 + 2.0 * h);
 }
 
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.

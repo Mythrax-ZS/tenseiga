@@ -1087,6 +1087,7 @@ impl App {
                 r.cloud_shadows = self.settings.visual.cloud_shadows;
                 r.foliage_sway = self.settings.visual.foliage_sway;
                 r.heat_haze = self.settings.visual.heat_haze;
+                r.night_lights = self.settings.visual.night_lights;
                 // Fireworks (the fireworks mapflag): set off, and each bangs as it bursts.
                 let (launches, bangs) = self.weather.fireworks(dt, self.settings.visual.weather);
                 for launch in launches {
@@ -1095,6 +1096,17 @@ impl App {
                 if let (true, Some(a)) = (bangs > 0 && r.show_effects, self.audio.as_ref()) {
                     for _ in 0..bangs.min(2) {
                         a.play(vfs, "effect\\itempokjuk.wav");
+                    }
+                }
+                // Fireflies on green maps at night.
+                if let (Some(spot), true) = (self.weather.fireflies(dt, w.climate, r.night_amount()), r.show_effects && self.settings.visual.night_lights) {
+                    if let Some(tex) = self.fx.fx_texture(r, vfs, fx::FxTexture::Glow) {
+                        self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        let (sy, cy) = r.camera.yaw.sin_cos();
+                        let (across, toward) = (glam::Vec3::new(cy, 0.0, sy), glam::Vec3::new(sy, 0.0, -cy));
+                        let pos = r.camera.target + (across * spot.x - toward * spot.y) * ro_render::CELL;
+                        let shape = ro_render::Shape::Fireflies { seed: self.spark_seed };
+                        r.procs.push(ro_render::ProcFx { tex, shape, pos, color: [0.75, 1.0, 0.35], time_ms: 0.0, duration_ms: 9000.0 });
                     }
                 }
                 // Thunderstorms: lightning lights the map, the thunder comes after.
