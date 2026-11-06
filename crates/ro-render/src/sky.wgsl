@@ -52,13 +52,39 @@ fn noise(p: vec3<f32>) -> f32 {
     return mix(z0, z1, t.z);
 }
 
-fn cloud_noise(p: vec3<f32>) -> f32 {
-    // Broad, soft masses with just enough small variation for a painted edge.
-    return noise(p) * 0.56
-        + noise(p * 2.03 + vec3(11.4, 7.1, 3.8)) * 0.28
-        + noise(p * 4.11 + vec3(4.2, 13.5, 9.2)) * 0.12
-        + noise(p * 8.23 + vec3(19.6, 5.2, 15.7)) * 0.04;
+// A lattice point's gradient direction (one hash).
+fn grad(q: vec2<f32>) -> vec2<f32> {
+    let a = hash(vec3(q, 3.7)) * 6.2831853;
+    return vec2(cos(a), sin(a));
 }
+
+// Gradient noise for the clouds: smooth, without value noise's blocky cells. About -0.7..0.7.
+fn gnoise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let a = dot(grad(i), f);
+    let b = dot(grad(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    let c = dot(grad(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+    let d = dot(grad(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// `octaves` of gradient noise, each turned and doubled (no grid lines); `detail` (0..1)
+// fades out all past the third. About -0.5..0.5.
+fn gfbm(p: vec2<f32>, octaves: i32, detail: f32) -> f32 {
+    let turn = mat2x2<f32>(0.8, 0.6, -0.6, 0.8);
+    var q = p;
+    var sum = 0.0;
+    var amp = 0.5;
+    for (var o = 0; o < octaves; o++) {
+        sum += gnoise(q) * amp * select(1.0, detail, o >= 3);
+        q = turn * q * 2.02 + vec2(3.1, 1.7);
+        amp *= 0.5;
+    }
+    return sum;
+}
+
 
 fn fbm(p: vec3<f32>) -> f32 {
     return noise(p) * 0.5
@@ -171,18 +197,46 @@ fn fs_main(input: VsOut) -> FsOut {
     color += s.cloud.rgb * sun_glow * 0.13 * (1.0 - night);
 
     let drift = s.time.x * s.clouds.z;
-    // Compress the cloud shapes vertically into broad banks instead of tall pillars.
-    let cloud_pos = vec3(cos(bearing + drift * 0.025) * 2.6, sin(bearing + drift * 0.025) * 2.6, elevation * 5.6)
-        * s.clouds.y + vec3(seed * 47.3, seed * 19.7, seed * 83.1 + drift * 0.075);
-    let mass = cloud_noise(cloud_pos);
-    let threshold = 0.72 - s.clouds.x * 0.42;
-    let density = smoothstep(threshold, threshold + 0.19, mass) * smoothstep(0.0, 0.12, s.clouds.x);
-    let edge_light = smoothstep(threshold + 0.04, threshold + 0.34, mass);
-    let shadow = mix(s.horizon.rgb, s.cloud.rgb, 0.55);
-    let day_cloud = mix(shadow, s.cloud.rgb, edge_light) + s.cloud.rgb * sun_glow * 0.12;
-    let night_cloud = mix(night_bottom, s.cloud.rgb * vec3(0.08, 0.10, 0.17), edge_light);
-    // Clouds settle into the horizon haze and become gentler at night.
-    let opacity = density * mix(0.70, 0.96, smoothstep(0.0, 0.32, height)) * (1.0 - night * 0.15);
+    // The cloud layer overhead, seen in perspective: shapes shrink toward the horizon
+    // instead of stretching across a wide screen, and the finest detail fades out far off
+    // (where it would only shimmer).
+    let plane = direction.xz / max(direction.y, 0.06);
+    let far = length(plane);
+    let detail = 1.0 - smoothstep(3.0, 11.0, far);
+    let wind = vec2(drift * 1.3, drift * 0.45);
+    let seeded = vec2(seed * 47.3, seed * 83.1);
+
+    // Cirrus: thin wisps far above the cumulus, streaked along the wind.
+    let hp = plane * s.clouds.y * 0.2 + wind * 0.35 + seeded * 0.31;
+    let streak = 0.5 + gfbm(vec2(hp.x * 0.5 + hp.y * 0.18, hp.y * 2.6 - hp.x * 0.9), 5, detail) * 1.3;
+    let cirrus = smoothstep(0.6, 0.84, streak) * (0.2 + 0.35 * s.clouds.x) * smoothstep(0.08, 0.45, height) * (1.0 - smoothstep(10.0, 16.0, far));
+    let cirrus_color = mix(s.cloud.rgb * 1.04 + s.cloud.rgb * sun_glow * 0.2, night_top * 1.8, night);
+    color = mix(color, cirrus_color, cirrus * 0.3);
+
+    // Cumulus: broad masses, domain-warped so they billow, with puffy detail on top.
+    let cp = plane * s.clouds.y * 0.95 + wind + seeded;
+    let warp = vec2(gfbm(cp * 0.6 + vec2(5.2, 1.3), 3, 1.0), gfbm(cp * 0.6 + vec2(8.3, 2.8), 3, 1.0));
+    let wp = cp + warp * 0.35;
+    // Cauliflower tops: ridged mid-size noise adds rounded puffs to each mass.
+    let puffs = (0.5 - abs(gnoise(wp * 2.7 + vec2(1.9, 7.4)))) * 0.22 + (0.5 - abs(gnoise(wp * 5.9 + vec2(6.1, 2.2)))) * 0.1 * detail;
+    let mass = 0.5 + gfbm(wp, 6, detail) * 1.15 + puffs - 0.12;
+    let threshold = 0.64 - s.clouds.x * 0.36;
+    let density = smoothstep(threshold, threshold + 0.14, mass) * smoothstep(0.0, 0.12, s.clouds.x);
+    // Light through the cloud: how much of it lies between here and the sun (two steps
+    // toward it), so sunlit sides are bright and the far sides and bellies darker.
+    let sun_flat = s.sun.xz / max(length(s.sun.xz), 1e-3);
+    let toward = sun_flat * 0.09;
+    let near_sun = 0.5 + gfbm(wp + toward, 3, 1.0) * 1.25;
+    let far_sun = 0.5 + gfbm(wp + toward * 2.5, 3, 1.0) * 1.25;
+    let thick = max(near_sun - threshold, 0.0) * 1.4 + max(far_sun - threshold, 0.0) * 0.9 + max(mass - threshold, 0.0) * 0.6;
+    let lit = exp(-thick * 4.0);
+    // Looking toward the sun, the thin edges glow (a silver lining).
+    let rim = pow(sun_alignment, 5.0) * density * (1.0 - smoothstep(0.0, 0.55, density)) * 3.0;
+    let shadow = mix(s.horizon.rgb, s.cloud.rgb, 0.45) * 0.8;
+    let day_cloud = mix(shadow, s.cloud.rgb * 1.08, lit) + s.cloud.rgb * (rim + sun_glow * 0.15);
+    let night_cloud = mix(night_bottom, s.cloud.rgb * vec3(0.08, 0.10, 0.17), lit);
+    // Clouds settle into the horizon haze, thin out far off, and soften at night.
+    let opacity = density * mix(0.6, 0.97, smoothstep(0.0, 0.3, height)) * (1.0 - night * 0.15) * (1.0 - 0.75 * smoothstep(6.0, 15.0, far));
     color = mix(color, mix(day_cloud, night_cloud, night), opacity);
 
     // A sparse, antialiased star field, tied to map bearing rather than screen pixels.
