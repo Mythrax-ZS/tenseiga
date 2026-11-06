@@ -17,6 +17,9 @@ use ro_formats::image::Rgba;
 const MAX_PANES: usize = 24;
 /// Windows found in a texture, at most (more is a pattern of tiles or stones).
 const MAX_WINDOWS: usize = 14;
+/// Windows lined up in a band this many times as long as it is tall are a course of bricks
+/// or a beam's pale band, broken into lengths: not windows.
+const STRIP: u32 = 6;
 
 struct Region {
     x0: u32,
@@ -237,6 +240,7 @@ pub fn window_mask(img: &Rgba) -> Option<Rgba> {
             }
         }
     };
+    let mut kept: Vec<Kept> = vec![];
     for (n, panes) in windows.values().enumerate() {
         let (x0, y0) = panes.iter().map(|&i| (regions[i].x0, regions[i].y0)).fold((u32::MAX, u32::MAX), |a, b| (a.0.min(b.0), a.1.min(b.1)));
         let (x1, y1) = panes.iter().map(|&i| (regions[i].x1, regions[i].y1)).fold((0, 0), |a, b| (a.0.max(b.0), a.1.max(b.1)));
@@ -253,6 +257,9 @@ pub fn window_mask(img: &Rgba) -> Option<Rgba> {
         if gw.min(gh) < (w.min(h) / 24).max(5) {
             continue;
         }
+        // A long strip is a pale band along a beam or a ridge (and with it, the rest of its
+        // band below is no window either).
+        let long = gw.max(gh) > gw.min(gh) * 5;
         // A window stands alone in a wall of another colour; a slate or a block of stone is
         // one of many like it. In a band around the window, little may look like its glass.
         let glass = {
@@ -290,15 +297,60 @@ pub fn window_mask(img: &Rgba) -> Option<Rgba> {
             continue;
         }
         let id = 40 + ((n as u32 * 97 + x0 * 13 + y0 * 7) % 200) as u8;
-        mark(panes, id, &mut mask);
-        found += 1;
+        kept.push(Kept { panes, id, bx: (x0, y0, x1, y1), long });
+    }
+    // Windows in a row (or a column) of three or more, like in size, whose band is a long
+    // strip: the bricks of a course, the tile ends along a ridge. (Not a row of windows
+    // taller than wide across the band, as tall narrow windows along a wall are.)
+    let in_strip = |k: usize| {
+        let a = kept[k].bx;
+        [false, true].iter().any(|&down| {
+            // (Across: x; along the band's thin way: y. Or the other way about.)
+            let span = |b: (u32, u32, u32, u32)| if down { (b.0, b.2, b.1, b.3) } else { (b.1, b.3, b.0, b.2) };
+            let (t0, t1, _, _) = span(a);
+            let lined = |&(u0, u1, _, _): &(u32, u32, u32, u32)| {
+                let over = t1.min(u1) as i64 - t0.max(u0) as i64 + 1;
+                let (ta, ua) = (t1 - t0 + 1, u1 - u0 + 1);
+                over as f32 >= 0.7 * ta.min(ua) as f32 && ta.max(ua) <= ta.min(ua) * 2
+            };
+            // (In line with a long strip lying along this way: the rest of that band.)
+            if kept.iter().any(|k| k.long && (k.bx.2 - k.bx.0 > k.bx.3 - k.bx.1) != down && lined(&span(k.bx))) {
+                return true;
+            }
+            let row: Vec<_> = kept.iter().map(|k| span(k.bx)).filter(lined).collect();
+            let (lo, hi) = row.iter().fold((u32::MAX, 0), |(lo, hi), r| (lo.min(r.2), hi.max(r.3)));
+            let (b0, b1) = row.iter().fold((u32::MAX, 0), |(lo, hi), r| (lo.min(r.0), hi.max(r.1)));
+            let across = |r: &(u32, u32, u32, u32)| (r.1 - r.0 + 1) as f32 / (r.3 - r.2 + 1) as f32;
+            let narrow = row.iter().filter(|r| across(r) > 1.25).count() * 2 > row.len();
+            row.len() >= 3 && hi - lo + 1 > (b1 - b0 + 1) * STRIP && !narrow
+        })
+    };
+    let strips: Vec<bool> = (0..kept.len()).map(|k| kept[k].long || in_strip(k)).collect();
+    // (Strips still count toward too many windows: a tiled roof has them as well.)
+    let mut patterned = 0;
+    for (k, strip) in kept.iter().zip(strips) {
+        if strip {
+            patterned += 1;
+        } else {
+            mark(k.panes, k.id, &mut mask);
+            found += 1;
+        }
     }
     // A texture mostly "windows", or with a great many of them, is something else: a
     // tiled roof, a patterned wall.
-    if found == 0 || found > MAX_WINDOWS || covered as f32 > (w * h) as f32 * 0.3 {
+    if found == 0 || found + patterned > MAX_WINDOWS || covered as f32 > (w * h) as f32 * 0.3 {
         return None;
     }
     Some(Rgba { width: w, height: h, pixels: mask })
+}
+
+/// A window that passed on its own: its panes, its number, its box, and whether it is a long
+/// strip (see `STRIP`).
+struct Kept<'a> {
+    panes: &'a [usize],
+    id: u8,
+    bx: (u32, u32, u32, u32),
+    long: bool,
 }
 
 /// The mean colour of the ring of texels `out` outside a region's box.
@@ -546,6 +598,28 @@ mod tests {
             }
         }
         assert!(window_mask(&slates).is_none());
+    }
+
+    #[test]
+    fn a_pale_band_along_a_beam_is_no_window() {
+        // A window, and below it a dark beam with a pale band along it, broken into lengths:
+        // touching (one long strip), or apart (a row of them).
+        for gap in [2, 7] {
+            let mut img = wall();
+            fill(&mut img, 40, 10, 80, 50, [240, 240, 240, 255]);
+            fill(&mut img, 43, 13, 77, 47, [60, 70, 85, 255]);
+            fill(&mut img, 4, 70, 124, 84, [35, 35, 40, 255]);
+            let mut x = 8;
+            while x + 14 <= 120 {
+                fill(&mut img, x, 73, x + 14, 81, [120, 125, 135, 255]);
+                x += 14 + gap;
+            }
+            let m = window_mask(&img).expect("the window");
+            let at = |x: u32, y: u32| m.pixels[((y * m.width + x) * 4) as usize];
+            assert_eq!(at(60, 30), 255, "glass");
+            assert_eq!(at(12, 76), 0, "beam, gap {gap}");
+            assert_eq!(at(64, 76), 0, "beam, gap {gap}");
+        }
     }
 
     #[test]
