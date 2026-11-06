@@ -16,6 +16,36 @@ pub enum Footprint {
 
 /// The area `skill` at `level` covers aimed at `target` by a caster on `caster`; None for
 /// skills the tables don't know.
+/// How far out a skill aimed by a player reaches, in cells from the caster's cell: rAthena
+/// measures a player's skills as a circle (battle_check_range -> check_distance_client:
+/// in range while floor(sqrt(dx² + dy²) - 0.1) <= range, so straight out it is one cell
+/// longer than the range), and never past the 14 cells a unit can see (AREA_SIZE).
+pub fn reach(range: u16) -> f32 {
+    (range as f32 + 1.1).min(14.0 * std::f32::consts::SQRT_2)
+}
+
+/// Whether a cell `d` cells away (dx, dy) is within a skill's `range`, as the server
+/// decides it for a player (see `reach`).
+pub fn in_reach(range: u16, d: (i32, i32)) -> bool {
+    let dist = ((d.0 * d.0 + d.1 * d.1) as f64).sqrt();
+    d.0.abs().max(d.1.abs()) <= 14 && ((dist - 0.1).max(0.0) as i64) <= range as i64
+}
+
+/// The texture of the reach ring (`Shape::Ring`): a bright line on its outer edge fading
+/// inward, constant around it.
+pub fn reach_texture() -> ro_render::Rgba {
+    const H: u32 = 32;
+    let mut pixels = Vec::with_capacity((4 * H * 4) as usize);
+    for y in 0..H {
+        let v = y as f32 / (H - 1) as f32;
+        let k = if v > 0.82 { 255.0 } else { 120.0 * (v / 0.82).powi(3) };
+        for _ in 0..4 {
+            pixels.extend([k as u8, k as u8, k as u8, 255]);
+        }
+    }
+    ro_render::Rgba { width: 4, height: H, pixels }
+}
+
 pub fn footprint(skill: u16, level: u16, caster: (i32, i32), target: (i32, i32)) -> Option<Footprint> {
     if let Some(r) = lookup(SQUARES, skill, level) {
         return Some(Footprint::Square(r as i32));
@@ -132,6 +162,24 @@ const VENOM_DUST: [(i32, i32); 5] = [(-1, 0), (0, -1), (0, 0), (0, 1), (1, 0)];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reach_is_the_servers_circle() {
+        // Range 9 (Fire Bolt): ten cells straight out, (7, 7) on the diagonal, not (10, 2).
+        assert!(in_reach(9, (10, 0)) && in_reach(9, (0, -10)) && in_reach(9, (10, 1)));
+        assert!(!in_reach(9, (11, 0)) && !in_reach(9, (10, 2)) && in_reach(9, (7, 7)) && !in_reach(9, (8, 7)));
+        // Every cell inside the ring is in reach and every one outside is not.
+        for range in [1u16, 3, 9, 14] {
+            for dx in -16i32..=16 {
+                for dy in -16i32..=16 {
+                    let inside = (((dx * dx + dy * dy) as f32).sqrt()) < reach(range);
+                    if dx.abs().max(dy.abs()) <= 14 {
+                        assert_eq!(inside, in_reach(range, (dx, dy)), "range {range} at ({dx}, {dy})");
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn square_areas_follow_the_server_per_level() {

@@ -1156,6 +1156,23 @@ impl App {
                     }
                 }
             }
+            // Aiming any skill: how far it reaches, a ring around us (skillarea::reach). Red
+            // when what we point at is out of reach (casting walks us closer first).
+            let aimed_range = self.aiming.and_then(|(s, _)| self.skills.iter().find(|k| k.id == s)).map(|k| k.range).filter(|&range| range > 0);
+            if let (Some(range), Some(me), true) = (aimed_range, self.player.as_ref(), self.settings.skill_range) {
+                let target = if self.pad.in_use() {
+                    self.pad_target.and_then(|t| self.units.get(&t)).map(|m| m.walker.cell)
+                } else {
+                    hovered.and_then(|id| self.units.get(&id)).map(|m| m.walker.cell).or(hover_cell.map(|(x, y)| (x as i32, y as i32)))
+                };
+                let at = me.walker.cell;
+                let far = target.is_some_and(|t| !skillarea::in_reach(range, (t.0 - at.0, t.1 - at.1)));
+                let tex = *self.reach_tex.get_or_insert_with(|| r.add_effect_texture(&skillarea::reach_texture()));
+                let color = if far { [1.0, 0.35, 0.3] } else { [0.55, 0.8, 1.0] };
+                // Held at full strength, centred where we stand (the server measures from our cell).
+                let pos = cell_pos_in(w, (at.0.max(0) as u16, at.1.max(0) as u16)).unwrap_or(me.actor.pos);
+                r.auras.push(ro_render::ProcFx { tex, shape: ro_render::Shape::Ring { radius: skillarea::reach(range), width: 0.9 }, pos, color, time_ms: 300.0, duration_ms: 1000.0 });
+            }
             if let Some(vfs) = self.vfs.as_deref() {
                 self.weather.update(dt, self.settings.visual.weather, &w.name, w.climate, r, vfs);
                 r.cloud_shadows = self.settings.visual.cloud_shadows;

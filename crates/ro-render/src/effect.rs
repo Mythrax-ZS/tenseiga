@@ -81,6 +81,10 @@ pub enum Shape {
     Motes { drift: Vec3, size: f32 },
     /// A flat rectangle on the ground, `size` cells across (skill areas being cast).
     Area { size: (f32, f32) },
+    /// A ring lying on the ground around `pos`, its outer edge `radius` cells out and `width`
+    /// cells across (a skill's reach while aiming). The texture's v runs from the inner edge
+    /// (0) to the outer (1); it follows the ground's rises and dips all the way round.
+    Ring { radius: f32, width: f32 },
     /// A camera-facing fleck of a hit spark, a cell above `pos`, flying along `drift` and
     /// flickering, `size` cells across (the original's EF_HIT1: four of effect\pok3.tga).
     Spark { drift: Vec3, size: f32 },
@@ -513,6 +517,24 @@ fn drape(out: &mut Vec<Vertex>, q: [Vertex; 4], ground: Option<&Heights>, lift: 
     }
 }
 
+/// A ring on the ground around `centre` (see `Shape::Ring`): short segments, each corner
+/// set on the ground, so it neither sinks into rises nor hangs over dips.
+fn ring(centre: Vec3, radius: f32, width: f32, color: [f32; 4], ground: Option<&Heights>, out: &mut Vec<Vertex>) {
+    let (outer, inner) = (radius * CELL, (radius - width).max(0.0) * CELL);
+    // About a third of a cell per segment.
+    let n = ((radius * std::f32::consts::TAU * 3.0) as usize).clamp(48, 512);
+    let at = |r: f32, i: usize, v: f32| {
+        let (s, c) = (i as f32 / n as f32 * std::f32::consts::TAU).sin_cos();
+        let (x, z) = (centre.x + c * r, centre.z + s * r);
+        let y = ground.map_or(centre.y, |g| g.at(x, z)) + 0.3;
+        Vertex { pos: [x, y, z], uv: [0.5, v], color }
+    };
+    for i in 0..n {
+        let (a, b, c, d) = (at(inner, i, 0.0), at(outer, i, 1.0), at(outer, i + 1, 1.0), at(inner, i + 1, 0.0));
+        out.extend([a, b, c, a, c, d]);
+    }
+}
+
 /// A camera-facing frame at `centre`: (right, up).
 fn facing(centre: Vec3, eye: Vec3) -> (Vec3, Vec3) {
     let fwd = (centre - eye).normalize_or_zero();
@@ -895,6 +917,7 @@ impl ProcFx {
                 let (a, b, cc, d) = (v(0, 0.0, 0.0), v(1, 1.0, 0.0), v(2, 1.0, 1.0), v(3, 0.0, 1.0));
                 out.extend([a, b, cc, a, cc, d]);
             }
+            Shape::Ring { radius, width } => ring(self.pos, radius, width, color, ground, out),
             Shape::Area { size } => {
                 let (hx, hz) = (size.0 * CELL / 2.0, size.1 * CELL / 2.0);
                 let v = |x: f32, z: f32, u: f32, vv: f32| Vertex { pos: (self.pos + Vec3::new(x, 0.2, z)).into(), uv: [u, vv], color };

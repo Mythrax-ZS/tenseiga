@@ -1237,6 +1237,8 @@ struct App {
     skill_scales: skillscale::SkillScales,
     /// The skill-area texture, made on first use.
     area_tex: Option<ro_render::TexId>,
+    /// The skill reach ring's texture (skillarea::reach_texture), made on first use.
+    reach_tex: Option<ro_render::TexId>,
     /// RODEX mail.
     mailbox: mail::Mailbox,
     clan: clan::Clan,
