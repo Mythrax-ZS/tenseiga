@@ -910,7 +910,7 @@ impl App {
                 for it in list {
                     self.social.storage.items.insert(it.index, inv_item(it));
                 }
-                self.load_icons();
+                self.load_storage_icons();
             }
             StorageAdded(it) => {
                 let it = inv_item(it);
@@ -920,7 +920,7 @@ impl App {
                         self.social.storage.items.insert(it.index, it);
                     }
                 }
-                self.load_icons();
+                self.load_storage_icons();
             }
             StorageRemoved { index, amount } => {
                 if let Some(s) = self.social.storage.items.get_mut(&index) {

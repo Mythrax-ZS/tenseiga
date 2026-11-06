@@ -113,6 +113,14 @@ impl App {
                     // write:<text> answers a Graffiti / Talkie Box message prompt.
                     Some(("write", text)) => self.windows.skill_text.take().map(|(skill, level, cell, _)| windows::UiAction::SkillText { skill, level, cell, text: text.to_string() }),
                     Some(("use", id)) => id.parse().ok().and_then(item).map(|(index, _)| windows::UiAction::UseItem(index)),
+                    // stash:id puts all of an inventory item into the open storage.
+                    Some(("stash", id)) => {
+                        if let Some(it) = id.parse::<u32>().ok().and_then(|id| self.inventory.items.values().find(|i| i.id == id)) {
+                            let (index, amount) = (it.index, it.amount as u32);
+                            self.send(ro_net::Command::Storage(ro_net::StorageRequest::Put { index, amount }));
+                        }
+                        None
+                    }
                     Some((f @ ("fav" | "unfav"), id)) => id.parse().ok().and_then(item).map(|(index, _)| windows::UiAction::Favorite { index, on: f == "fav" }),
                     Some(("invtab", n)) => {
                         self.windows.inventory_tab(n.parse().unwrap_or(0));

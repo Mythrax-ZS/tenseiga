@@ -1546,6 +1546,11 @@ impl App {
         match loaded {
             Ok(map) => {
                 r.set_prepared_scene(&map.mesh, map.scene, map.lighting);
+                // Captures draw no frames until theirs, so the textures would never go up over
+                // frames (and the loading screen would wait on them): all now.
+                if self.capture.is_some() {
+                    r.finish_uploads();
+                }
                 let submerged = map.effects.iter().filter(|e| e.0 == 109).count() >= 40;
                 let sky = sky::for_map(vfs, name, &map.lighting, submerged);
                 let outdoors = sky.is_some();
@@ -2373,14 +2378,27 @@ impl App {
         }
     }
 
-    /// Loads inventory icons not yet loaded into egui textures: an item's own icon, and for
+    /// Loads inventory icons not yet loaded into egui textures (see `load_item_icons`).
+    fn load_icons(&mut self) {
+        let items: Vec<(u32, bool)> = self.inventory.items.values().map(|i| (i.id, i.identified)).collect();
+        self.load_item_icons(&items);
+    }
+
+    /// Loads storage icons not yet loaded: the storage window draws from the same icons as
+    /// the inventory, so items only in storage had none.
+    fn load_storage_icons(&mut self) {
+        let items: Vec<(u32, bool)> = self.social.storage.items.values().map(|i| (i.id, i.identified)).collect();
+        self.load_item_icons(&items);
+    }
+
+    /// Icons for (item id, identified) not yet loaded: an item's own icon, and for
     /// unidentified ones their unidentified look as well (kept apart, so identifying one swaps
     /// the icon).
-    fn load_icons(&mut self) {
-        let ids: Vec<u32> = self.inventory.items.values().map(|i| i.id).collect();
+    fn load_item_icons(&mut self, items: &[(u32, bool)]) {
+        let ids: Vec<u32> = items.iter().map(|i| i.0).collect();
         self.load_icons_for(&ids);
         let (Some(db), Some(vfs)) = (self.item_db.as_ref(), self.vfs.as_deref()) else { return };
-        let unid: Vec<u32> = self.inventory.items.values().filter(|i| !i.identified).map(|i| i.id).collect();
+        let unid: Vec<u32> = items.iter().filter(|i| !i.1).map(|i| i.0).collect();
         for id in unid {
             if self.unid_icons.contains_key(&id) || !self.unid_tried.insert(id) {
                 continue;
