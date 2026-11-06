@@ -17,6 +17,14 @@ impl App {
         let dt = (now - self.last_tick).as_secs_f32() * 1000.0;
         self.last_tick = now;
         self.perf.frame(dt);
+        // Photo mode: the camera flies on real time; the world stands still.
+        if self.photo.as_ref().is_some_and(|p| p.leaving) {
+            self.leave_photo();
+        }
+        if let (Some(p), Some(r)) = (self.photo.as_mut(), self.renderer.as_mut()) {
+            p.fly(dt, &mut r.camera);
+        }
+        let dt = if self.photo.is_some() { 0.0 } else { dt };
         // While a map loads the old world takes no controller input (see start_map_load).
         if self.front.is_none() && self.map_load.is_none() {
             self.pad_tick(dt);
@@ -382,6 +390,11 @@ impl App {
                     // altkey:x presses Alt+x.
                     Some(("altkey", k)) => {
                         self.alt_key(k);
+                        None
+                    }
+                    // photo goes into photo mode, or out of it.
+                    Some(("photo", _)) => {
+                        self.toggle_photo();
                         None
                     }
                     // screenshot takes one, as Print Screen does.
@@ -1024,7 +1037,9 @@ impl App {
                 let mut a = p.update(dt, w, octant, idle);
                 a.silhouette = self.settings.visual.silhouettes.then_some(SILHOUETTE_SELF);
                 tracing::trace!(x = a.pos.x / ro_render::CELL, z = a.pos.z / ro_render::CELL, dt, cell = ?p.walker.cell, next = ?p.walker.next(), "walk trace");
-                r.camera.target = a.pos + quake_offset(&mut self.quakes, std::time::Instant::now(), r.camera.yaw);
+                if self.photo.is_none() {
+                    r.camera.target = a.pos + quake_offset(&mut self.quakes, std::time::Instant::now(), r.camera.yaw);
+                }
                 let level = self.hud.status.base_level >= AURA_LEVEL as i64;
                 p.aura_ms = auras.push(r, self.hat_auras.get(&self.account_id).copied(), level, &a, p.aura_ms + dt, self.account_id);
                 r.actors.push(a);
@@ -1289,6 +1304,9 @@ impl App {
         }
 
         r.post_settings = self.settings.visual.post();
+        if let Some(p) = self.photo.as_ref() {
+            r.post_settings = p.look(r.post_settings);
+        }
         if self.settings.visual.render_auto {
             // About a million world pixels, in the slider's 5% steps (shown there).
             let (w, h) = r.size();
@@ -1545,8 +1563,9 @@ impl App {
                 ]
             });
             let load_progress = self.map_load.as_ref().map(MapLoad::progress);
+            let mut photo_ask = photo::Ask::None;
             let out = self.egui_ctx.run_ui(input, |ui| {
-                if let Some(lines) = &perf_lines {
+                if let (Some(lines), true) = (&perf_lines, self.photo.is_none()) {
                     self.perf.show(ui.ctx(), lines);
                 }
                 // The game cursor on every screen (its own top layer, so draw order does not matter).
@@ -1576,6 +1595,11 @@ impl App {
                     let accessory = |v: u16| tables.accessory(v as u32).map(str::to_string);
                     let fctx = screens::Ctx { vfs: self.vfs.as_deref(), job_title: &job_title, job_sprite: &job_sprite, accessory: &accessory };
                     front_action = front.show(ui.ctx(), &fctx);
+                    return;
+                }
+                // Photo mode: only its panel.
+                if let Some(p) = self.photo.as_mut() {
+                    photo_ask = p.show(ui.ctx());
                     return;
                 }
                 sent = self.hud.show(ui.ctx(), &labels, &floaters, &bars, &cast_bars, &says);
@@ -2030,6 +2054,12 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
                 }
             });
             drop(view);
+            match photo_ask {
+                photo::Ask::Save => self.screenshot = true,
+                // Next tick: the renderer is borrowed here.
+                photo::Ask::Leave => self.photo.iter_mut().for_each(|p| p.leaving = true),
+                photo::Ask::None => {}
+            }
             // Handled next tick: the renderer is borrowed here.
             if ui_action.is_some() {
                 self.queued_action = ui_action;
@@ -2123,7 +2153,8 @@ ui.ctx(), &self.icons, |id| db.map_or_else(|| format!("item {id}"), |d| d.name(i
             // Rendered again offscreen (with or without the UI) and saved; the window keeps
             // the previous frame for this one.
             let (w, h) = r.size();
-            match r.capture_with(w, h, self.settings.screenshot_ui) {
+            // Photo mode's pictures never show its panel.
+            match r.capture_with(w, h, self.settings.screenshot_ui && self.photo.is_none()) {
                 Ok(img) => {
                     let path = screenshot_path();
                     self.hud.push_chat(ro_net::ChatKind::System, format!("Screenshot saved: {}", path.display()));

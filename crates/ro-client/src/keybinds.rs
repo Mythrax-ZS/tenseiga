@@ -23,6 +23,8 @@ pub enum Does {
     Perf,
     Fullscreen,
     Screenshot,
+    /// Photo mode on or off.
+    Photo,
     /// Say a macro: 1-9, then 0 for the tenth (`emotes::macro_slot`).
     Macro(u8),
 }
@@ -77,6 +79,7 @@ const INTERFACE: &[Action] = &[
     a("perf", "Performance overlay on or off (frame rate, frame times, ping)", "F10", Does::Perf),
     a("fullscreen", "Full screen on or off", "F11", Does::Fullscreen),
     a("screenshot", "Screenshot (Print Screen always takes one too)", "ScrollLock", Does::Screenshot),
+    a("photo", "Photo mode (the world holds still, the camera goes free)", "Ctrl+P", Does::Photo),
 ];
 
 const MACROS: &[Action] = &[

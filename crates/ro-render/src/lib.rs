@@ -299,6 +299,10 @@ pub struct Renderer {
     /// The same geometry alpha-blended (effects that darken, see `ProcFx::shades`).
     shade_pipeline: wgpu::RenderPipeline,
     started: std::time::Instant,
+    /// Photo mode: time stands still from this moment (and all the time it stood still
+    /// before, which the clock leaves out).
+    frozen_at: Option<std::time::Instant>,
+    frozen_for: std::time::Duration,
     /// The grid is drawn instead while no map is loaded.
     scene: Option<scene::Scene>,
     pub lighting: Lighting,
@@ -779,6 +783,8 @@ impl Renderer {
             effect_pipeline,
             shade_pipeline,
             started: std::time::Instant::now(),
+            frozen_at: None,
+            frozen_for: std::time::Duration::ZERO,
             lighting: Lighting::default(),
             camera: Camera::default(),
             scale_factor: window.scale_factor(),
@@ -917,7 +923,7 @@ impl Renderer {
     /// Uploads a texture for code-drawn effects (light columns, ground circles).
     /// Replaces the map's particle emitters (textures from `add_effect_texture`).
     pub fn set_emitters(&mut self, emitters: Vec<Emitter>, winds: Vec<Wind>, waterfalls: Vec<Waterfall>) {
-        let now = self.started.elapsed().as_secs_f32();
+        let now = self.secs();
         self.particles.set(&self.device, emitters, winds, waterfalls, now);
     }
 
@@ -1205,6 +1211,24 @@ impl Renderer {
         [dir.x, dir.y, self.foliage_sway * gale, 0.0]
     }
 
+    /// Seconds of the world's clock (shaders' time): it stands still in photo mode.
+    fn secs(&self) -> f32 {
+        let now = self.frozen_at.unwrap_or_else(std::time::Instant::now);
+        (now.duration_since(self.started).saturating_sub(self.frozen_for)).as_secs_f32()
+    }
+
+    /// Photo mode: the world's time stands still (water, weather, swaying trees, the sun).
+    pub fn set_frozen(&mut self, on: bool) {
+        match (on, self.frozen_at) {
+            (true, None) => self.frozen_at = Some(std::time::Instant::now()),
+            (false, Some(at)) => {
+                self.frozen_for += at.elapsed();
+                self.frozen_at = None;
+            }
+            _ => {}
+        }
+    }
+
     /// How far into night it is (0 day .. 1 night), as the light eases between them.
     pub fn night_amount(&self) -> f32 {
         self.night_t
@@ -1390,7 +1414,8 @@ impl Renderer {
         // Night: blend the map's light and the look toward moonlight for this frame only.
         let now = std::time::Instant::now();
         // Uncapped: after a long gap (a capture, a stall) the fade simply completes.
-        let dt = (now - self.last_frame).as_secs_f32();
+        // Nothing moves while time stands still (photo mode).
+        let dt = if self.frozen_at.is_some() { 0.0 } else { (now - self.last_frame).as_secs_f32() };
         self.last_frame = now;
         let goal = if self.night { 1.0 } else { 0.0 };
         self.night_t += (goal - self.night_t).clamp(-dt * 0.5, dt * 0.5);
@@ -1512,7 +1537,7 @@ impl Renderer {
         let lights: Vec<[f32; 4]> = {
             let mut near: Vec<&PointLight> = self.point_lights.iter().collect();
             near.sort_by(|a, b| a.pos.distance_squared(cam.target).total_cmp(&b.pos.distance_squared(cam.target)));
-            let t = self.started.elapsed().as_secs_f32();
+            let t = self.secs();
             // The colour's w is the flicker's swing, for the light baked around the flame.
             near.iter().take(MAX_LIGHTS).flat_map(|l| {
                 let f = l.flicker(t);
@@ -1531,7 +1556,7 @@ impl Renderer {
                 let f = 1.0 / (cam.fovy / 2.0).tan();
                 let s = CELL / sprite::PIXELS_PER_CELL;
                 let snap = self.post_settings.enabled && self.post_settings.pixel_snap;
-                [self.started.elapsed().as_secs_f32(), s * f / aspect, s * f, if snap { 1.0 } else { 0.0 }]
+                [self.secs(), s * f / aspect, s * f, if snap { 1.0 } else { 0.0 }]
             },
             light_vp: light_vp.to_cols_array_2d(),
             shadow: [shadow_strength, 1.0 / shadow::SIZE as f32, self.post_settings.shadow_softness, 0.0],
@@ -1590,7 +1615,7 @@ impl Renderer {
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let outdoor_sky = self.scene.is_some() && self.room.is_none() && self.underwater <= 0.0 && self.sky_profile.is_some();
         if outdoor_sky {
-            self.sky.update(&self.queue, self.sky_profile.as_ref().unwrap(), cam, aspect, self.started.elapsed().as_secs_f32(), self.night_t, self.shadow_dir().to_array());
+            self.sky.update(&self.queue, self.sky_profile.as_ref().unwrap(), cam, aspect, self.secs(), self.night_t, self.shadow_dir().to_array());
         }
 
         // Sprites, back to front by distance from the eye so blended edges composite.
@@ -1635,10 +1660,11 @@ impl Renderer {
         }
 
         // Water: this frame's settings, mesh density and screen-copy size.
+        let secs = self.secs();
         if let Some(w) = self.water.as_mut() {
             w.retessellate(&self.device, self.water_settings.tessellation);
             let walkers = self.actors.iter().filter(|a| a.alpha > 0.1).map(|a| (a.pos, a.action == 1));
-            w.wade(walkers, cam.target, cam.eye(), self.started.elapsed().as_secs_f32());
+            w.wade(walkers, cam.target, cam.eye(), secs);
             let lum = |c: [f32; 3]| c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
             let sky_scale = (lum(self.lighting.diffuse) + lum(self.lighting.ambient)) / (lum(day_light.diffuse) + lum(day_light.ambient)).max(1e-3);
             let sky_scale = if outdoor_sky { sky_scale * (1.0 - 0.78 * self.night_t) } else { sky_scale };
@@ -1794,7 +1820,7 @@ impl Renderer {
             // Map particle emitters (smoke, sparks, dust...), each with its map-given blend
             // (RO_PARTICLES_OFF hides them, for comparing).
             if !self.particles.is_empty() && std::env::var_os("RO_PARTICLES_OFF").is_none() {
-                let now = self.started.elapsed().as_secs_f32();
+                let now = self.secs();
                 let (eye, focus) = (self.camera.eye(), self.camera.target);
                 let range = 60.0 * CELL;
                 self.particles.update(now, focus, range);
@@ -1883,7 +1909,7 @@ impl Renderer {
                 sun_uv: (outdoor_sky && sun.w > 0.0).then(|| [sun.x / sun.w * 0.5 + 0.5, 0.5 - sun.y / sun.w * 0.5]),
                 underwater: self.underwater,
                 heat: self.heat(),
-                time: self.started.elapsed().as_secs_f32(),
+                time: self.secs(),
                 eye: cam.eye(),
                 inv_view_proj: vp.inverse(),
             }

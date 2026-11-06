@@ -14,11 +14,13 @@ pub struct Camera {
     pub pitch: f32,
     pub distance: f32,
     pub fovy: f32,
+    /// Photo mode: zoom and tilt go well past play's limits.
+    pub free: bool,
 }
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { target: Vec3::ZERO, yaw: 0.0, pitch: 50f32.to_radians(), distance: 300.0, fovy: 20f32.to_radians() }
+        Self { target: Vec3::ZERO, yaw: 0.0, pitch: 50f32.to_radians(), distance: 300.0, fovy: 20f32.to_radians(), free: false }
     }
 }
 
@@ -32,12 +34,14 @@ impl Camera {
     }
 
     pub fn zoom(&mut self, steps: f32) {
-        self.distance = (self.distance * 0.9f32.powf(steps)).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+        let (lo, hi) = if self.free { (30.0, 1600.0) } else { (Self::MIN_DISTANCE, Self::MAX_DISTANCE) };
+        self.distance = (self.distance * 0.9f32.powf(steps)).clamp(lo, hi);
     }
 
     pub fn rotate(&mut self, d_yaw: f32, d_pitch: f32) {
         self.yaw = (self.yaw + d_yaw).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + d_pitch).clamp(25f32.to_radians(), 75f32.to_radians());
+        let (lo, hi) = if self.free { (4f32, 89f32) } else { (25f32, 75f32) };
+        self.pitch = (self.pitch + d_pitch).clamp(lo.to_radians(), hi.to_radians());
     }
 
     pub fn eye(&self) -> Vec3 {

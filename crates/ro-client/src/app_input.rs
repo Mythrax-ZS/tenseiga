@@ -69,6 +69,7 @@ impl App {
                 self.settings.save();
             }
             Does::Screenshot => self.screenshot = true,
+            Does::Photo => self.toggle_photo(),
         }
     }
 
