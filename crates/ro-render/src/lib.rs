@@ -284,6 +284,8 @@ pub struct Renderer {
     pub heat_haze: bool,
     /// Foliage swaying in the wind (0 still .. 1 lively); the weather makes it blow harder.
     pub foliage_sway: f32,
+    /// Ice on the water of snowy maps (0 open water .. 1 frozen over).
+    pub icy_water: f32,
     /// A lightning flash lighting the map this frame (0 none .. about 1): the game sets it
     /// while a storm flashes. Outdoors only.
     pub lightning: f32,
@@ -776,6 +778,7 @@ impl Renderer {
             wetness: 0.0,
             lightning: 0.0,
             foliage_sway: 0.0,
+            icy_water: 0.0,
             heat_haze: true,
             night_lights: true,
             effects: vec![],
@@ -1250,6 +1253,14 @@ impl Renderer {
         base * (1.0 - self.night_t * 0.85) * (1.0 - cooled.clamp(0.0, 1.0))
     }
 
+    /// How much of the water is frozen: snowy maps outdoors only.
+    fn ice(&self) -> f32 {
+        match self.sky_profile.as_ref() {
+            Some(p) if p.name == "snow" && self.room.is_none() && self.underwater <= 0.0 => self.icy_water.clamp(0.0, 1.0),
+            _ => 0.0,
+        }
+    }
+
     /// How hard it rains on this map now (0..1): outdoors, with effects shown.
     fn raining(&self) -> f32 {
         if !self.show_effects || self.room.is_some() || self.underwater > 0.0 || self.sky_profile.is_none() {
@@ -1591,7 +1602,7 @@ impl Renderer {
             wind: self.wind_globals(),
             // Windows light up as night falls, outdoors (interiors keep their own light).
             night: [if self.night_lights && self.sky_profile.is_some() && self.room.is_none() { self.night_t * 1.6 } else { 0.0 }, 0.0, 0.0, 0.0],
-            wet: [if self.post_settings.enabled { self.wetness } else { 0.0 }, self.raining(), 0.0, 0.0],
+            wet: [if self.post_settings.enabled { self.wetness } else { 0.0 }, self.raining(), self.ice(), 0.0],
             wet_sky: match self.sky_profile.as_ref() {
                 Some(p) => {
                     // Under rain the sky is grey: the clear sky's colour, washed out by the gloom.
