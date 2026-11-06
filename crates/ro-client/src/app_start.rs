@@ -181,6 +181,7 @@ pub(crate) fn start(event_loop: Option<EventLoop<()>>) -> anyhow::Result<()> {
         pet_evo: Default::default(),
         skill_scales: Default::default(),
         area_tex: None,
+        reach_tex: None,
         mailbox: Default::default(),
         clan: Default::default(),
         merge: Default::default(),
