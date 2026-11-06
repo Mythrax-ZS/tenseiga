@@ -658,20 +658,27 @@ pub fn rsm_at(rsm: &Rsm, pos: Vec3) -> Vec<(usize, Vec<Vertex>)> {
     out
 }
 
-/// GPU-side scene.
+/// GPU-side scene. Its textures go up a few at a time over the frames after it is set
+/// (`pump`): a big map's are hundreds of megabytes (the HD texture pack with mip chains),
+/// which written all at once froze the game for a third of a second or more. Pieces whose
+/// texture is not up yet are not drawn; the loading screen stays up until all are.
 pub(crate) struct Scene {
     pub vertices: wgpu::Buffer,
     pub ranges: Vec<std::ops::Range<u32>>,
-    pub textures: Vec<wgpu::BindGroup>,
+    /// Each texture's bind group, once uploaded.
+    pub textures: Vec<Option<wgpu::BindGroup>>,
+    /// Textures still to upload: (index, mip chain, window mask's mip chain), next first.
+    pending: std::collections::VecDeque<(usize, Vec<Rgba>, Option<Vec<Rgba>>)>,
+    lightmap: wgpu::TextureView,
+    /// The window mask of textures without windows: one dark pixel.
+    no_windows: wgpu::TextureView,
 }
 
 impl Scene {
+    /// The scene's geometry now; its textures wait for `pump`.
     pub fn upload(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        layout: &wgpu::BindGroupLayout,
-        sampler: &wgpu::Sampler,
-        lightmap_sampler: &wgpu::Sampler,
         mesh: &SceneMesh,
         textures: Vec<Vec<Rgba>>,
         windows: Vec<Option<Vec<Rgba>>>,
@@ -682,28 +689,38 @@ impl Scene {
             usage: wgpu::BufferUsages::VERTEX,
         });
         let lightmap = upload_texture(device, queue, &mesh.lightmap, false);
-        // Textures without windows share one dark pixel.
         let no_windows = upload_texture(device, queue, &Rgba { width: 1, height: 1, pixels: vec![0, 0, 0, 255] }, false);
         let mut windows = windows.into_iter();
-        let textures = textures
-            .into_iter()
-            .map(|levels| {
-                let view = upload_levels(device, queue, &levels);
-                let window_view = windows.next().flatten().map(|levels| upload_levels(device, queue, &levels));
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("scene texture"),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
-                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&lightmap) },
-                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(lightmap_sampler) },
-                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(window_view.as_ref().unwrap_or(&no_windows)) },
-                    ],
-                })
-            })
-            .collect();
-        Self { vertices, ranges: mesh.ranges.clone(), textures }
+        let pending: std::collections::VecDeque<_> = textures.into_iter().enumerate().map(|(i, levels)| (i, levels, windows.next().flatten())).collect();
+        Self { vertices, ranges: mesh.ranges.clone(), textures: (0..pending.len()).map(|_| None).collect(), pending, lightmap, no_windows }
+    }
+
+    /// Uploads textures still waiting, for up to `budget` (at least one; None: all of them).
+    pub fn pump(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, lightmap_sampler: &wgpu::Sampler, budget: Option<std::time::Duration>) {
+        let start = std::time::Instant::now();
+        while let Some((i, levels, window)) = self.pending.pop_front() {
+            let view = upload_levels(device, queue, &levels);
+            let window_view = window.map(|levels| upload_levels(device, queue, &levels));
+            self.textures[i] = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scene texture"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.lightmap) },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(lightmap_sampler) },
+                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(window_view.as_ref().unwrap_or(&self.no_windows)) },
+                ],
+            }));
+            if budget.is_some_and(|b| start.elapsed() >= b) {
+                break;
+            }
+        }
+    }
+
+    /// How much of the textures is up (0..1), or None once all are.
+    pub fn progress(&self) -> Option<f32> {
+        (!self.pending.is_empty()).then(|| 1.0 - self.pending.len() as f32 / self.textures.len().max(1) as f32)
     }
 }
 

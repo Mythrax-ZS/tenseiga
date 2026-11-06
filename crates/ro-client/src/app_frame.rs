@@ -1591,7 +1591,14 @@ impl App {
                     p.vram.map_or("GPU memory -".to_string(), |(used, reserved)| format!("GPU memory {} MB ({} MB reserved)", used >> 20, reserved >> 20)),
                 ]
             });
-            let load_progress = self.map_load.as_ref().map(MapLoad::progress);
+            // The loading screen's bar: the map loader's progress, then the textures going up
+            // to the GPU over the frames after (ro_render::Renderer::upload_progress); it stays
+            // until both are done.
+            let load_progress = match (self.map_load.as_ref().map(MapLoad::progress), r.upload_progress()) {
+                (Some(p), _) => Some(p * 0.85),
+                (None, Some(u)) => Some(0.85 + 0.15 * u),
+                (None, None) => None,
+            };
             let mut photo_ask = photo::Ask::None;
             let out = self.egui_ctx.run_ui(input, |ui| {
                 if let (Some(lines), true) = (&perf_lines, self.photo.is_none()) {
