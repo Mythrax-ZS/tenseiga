@@ -54,6 +54,8 @@ struct Globals {
 @group(1) @binding(1) var samp: sampler;
 @group(1) @binding(2) var lightmap: texture_2d<f32>;
 @group(1) @binding(3) var lightmap_samp: sampler;
+// Where the texture's windows are (windows.rs): red glass, green a number per window.
+@group(1) @binding(4) var window_tex: texture_2d<f32>;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -172,7 +174,7 @@ fn fs_main(in: VsOut) -> FsOut {
     let pl = point_light(in.world, n);
     // The torch light baked into the lightmap wavers with the flame.
     let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) * (1.0 + pl.w) + srgb_to_linear(t.rgb * in.color) * pl.rgb) * torch_shadows(in.world);
-    let glow = window_glow(in.uv, ddx, ddy, in.world, flat, max(ground, in.kind.y));
+    let glow = window_glow(in.uv, ddx, ddy, flat, max(ground, in.kind.y));
     return FsOut(vec4(wet_surface(lit, in.world, flat, ground) + glow, 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
 }
 
@@ -406,51 +408,27 @@ fn sway(p: vec3<f32>, reach: f32) -> vec3<f32> {
     return (dir * bend + side * flutter * 0.6 + vec3(0.0, flutter * 0.3 - bend * bend * 0.15, 0.0)) * k;
 }
 
-// Windows lit from within at night (models only, upright faces). Glass in RO's textures is
-// dark, greyish blue between lighter frames. Whether an area is a window is judged on a
-// heavily blurred look at the texture, so the answer holds for a whole pane rather than
-// flickering texel by texel (drawn small, that lit scattered specks, and blue banner
-// cloth); saturated blues (cloth, paint) are not glass. Within a window, the dark panes
-// glow evenly and the lighter frames stay dark (a lightly blurred look). Some windows
-// stay dark, each lit one flickers a little.
-fn window_glow(uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
+// Windows lit from within at night (models only, upright faces, not props or thin
+// pieces). Where the glass is was found when the texture loaded, by its shape (windows.rs):
+// the mask's red is the glass, its green a number per window, so a whole window is lit or
+// dark together, and each lit one flickers a little, like lamplight.
+fn window_glow(uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
     let k = g.night.x;
-    // Walls only: near-vertical faces (a steep roof of dark blue slate reads just like glass).
-    if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.12 {
+    if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.3 {
         return vec3(0.0);
     }
-    // (A blurrier mip level picked outright: scaling the gradients instead would blur along
-    // one direction only, the sampler being anisotropic, and leave streaks.)
-    let size = vec2<f32>(textureDimensions(tex));
-    let lod = log2(max(max(length(ddx * size), length(ddy * size)), 1e-4));
-    let area4 = textureSampleLevel(tex, samp, uv, max(lod, 0.0) + 3.0);
-    let area = area4.rgb;
-    let area_lum = dot(area, vec3(0.299, 0.587, 0.114));
-    let area_blue = area.b - max(area.r, area.g);
-    let area_sat = (max(area.r, max(area.g, area.b)) - min(area.r, min(area.g, area.b))) / max(max(area.r, max(area.g, area.b)), 1e-3);
-    // Glass sits inside a solid wall: near a texture's see-through parts (a stall's poles,
-    // an awning's edge) the blur takes in the transparent texels' colour and can look like
-    // glass, so only areas fully opaque count.
-    let window = smoothstep(0.01, 0.045, area_blue) * (1.0 - smoothstep(0.3, 0.5, area_sat)) * (1.0 - smoothstep(0.3, 0.48, area_lum)) * smoothstep(0.97, 0.995, area4.a);
-    if window <= 0.0 {
+    let m = textureSampleGrad(window_tex, samp, uv, ddx, ddy);
+    if m.r <= 0.02 {
         return vec3(0.0);
     }
-    // The glass glows (it's painted lighter or darker, with streaks of reflection); only
-    // the near-black bars between the panes stay dark.
-    let near = textureSampleLevel(tex, samp, uv, max(lod, 0.0) + 0.5).rgb;
-    let near_lum = dot(near, vec3(0.299, 0.587, 0.114));
-    let pane = smoothstep(0.05, 0.13, near_lum) * (0.75 + 0.5 * smoothstep(0.1, 0.5, near_lum));
-    let lit = window * pane;
-    if lit <= 0.0 {
-        return vec3(0.0);
-    }
-    let cell = floor(world / 8.0);
-    let h = cloud_hash(cell.xz + vec2(cell.y * 7.0, cell.y * 13.0));
-    if h > 0.6 {
+    // The window's own number, undone from the glass's share at its edge.
+    let id = m.g / max(m.r, 1e-3);
+    let h = fract(id * 255.0 * 0.6180339);
+    if h > 0.65 {
         return vec3(0.0);
     }
     let flicker = 0.92 + 0.08 * sin(g.params.x * (2.0 + h * 3.0) + h * 40.0);
-    return vec3(1.0, 0.62, 0.28) * lit * k * flicker * (2.0 + 1.6 * h);
+    return vec3(1.0, 0.62, 0.28) * m.r * k * flicker * (2.0 + 1.6 * h);
 }
 
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.

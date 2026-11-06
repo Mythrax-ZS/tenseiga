@@ -674,6 +674,7 @@ impl Scene {
         lightmap_sampler: &wgpu::Sampler,
         mesh: &SceneMesh,
         textures: Vec<Vec<Rgba>>,
+        windows: Vec<Option<Vec<Rgba>>>,
     ) -> Self {
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("scene"),
@@ -681,10 +682,14 @@ impl Scene {
             usage: wgpu::BufferUsages::VERTEX,
         });
         let lightmap = upload_texture(device, queue, &mesh.lightmap, false);
+        // Textures without windows share one dark pixel.
+        let no_windows = upload_texture(device, queue, &Rgba { width: 1, height: 1, pixels: vec![0, 0, 0, 255] }, false);
+        let mut windows = windows.into_iter();
         let textures = textures
             .into_iter()
             .map(|levels| {
                 let view = upload_levels(device, queue, &levels);
+                let window_view = windows.next().flatten().map(|levels| upload_levels(device, queue, &levels));
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("scene texture"),
                     layout,
@@ -693,6 +698,7 @@ impl Scene {
                         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
                         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&lightmap) },
                         wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(lightmap_sampler) },
+                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(window_view.as_ref().unwrap_or(&no_windows)) },
                     ],
                 })
             })
