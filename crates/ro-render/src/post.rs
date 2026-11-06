@@ -144,6 +144,8 @@ pub struct FrameInfo {
     pub sun_uv: Option<[f32; 2]>,
     /// 0..1: the underwater look (absorption, caustics, shafts, drifting particles).
     pub underwater: f32,
+    /// Heat haze (0 none .. 1): the air shimmering over deserts and volcanoes by day.
+    pub heat: f32,
     /// Seconds, for the underwater animation (and the eye's adaptation).
     pub time: f32,
     /// The map's light now against its daylight (below 1 at night), so auto exposure
@@ -402,7 +404,7 @@ impl Post {
                 None => [0.5, -0.5, 0.0, 0.0],
             },
             ao: [s.ambient_occlusion, 14.0 * h / 1080.0, 0.0, 0.0],
-            water: [if s.enabled { frame.underwater } else { 0.0 }, frame.time, w / h, 0.0],
+            water: [if s.enabled { frame.underwater } else { 0.0 }, frame.time, w / h, if s.enabled { frame.heat } else { 0.0 }],
             eye: frame.eye.extend(1.0).to_array(),
             adapt: [s.auto_exposure, (NEUTRAL_LUMINANCE * frame.light_ratio.max(0.05)).log2(), EXPOSURE_RANGE.0, EXPOSURE_RANGE.1],
             inv_vp: frame.inv_view_proj.to_cols_array_2d(),

@@ -22,7 +22,7 @@ struct Params {
     rays: vec4<f32>,
     // x: AO strength, y: sample radius in pixels at the focus distance
     ao: vec4<f32>,
-    // Underwater: x strength (0 off), y seconds, z aspect ratio
+    // Underwater: x strength (0 off), y seconds, z aspect ratio; w heat haze (0 off)
     water: vec4<f32>,
     // Eye position (world)
     eye: vec4<f32>,
@@ -240,6 +240,15 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     var uv = in.uv;
     if uw > 0.0 {
         uv += vec2(sin(in.uv.y * 23.0 + secs * 1.6) + sin(in.uv.y * 41.0 - secs * 2.3) * 0.5, cos(in.uv.x * 19.0 + secs * 1.3)) * 0.0018 * uw;
+    }
+    // Heat haze (deserts and volcanoes by day): the air shimmers, rising, more the further off.
+    let heat = p.water.w;
+    if heat > 0.0 {
+        let far = textureSample(info, samp, in.uv).x;
+        let reach = 0.55 + 0.45 * smoothstep(p.depth.x * 0.7, p.depth.x * 1.8, far);
+        let q = vec2(in.uv.x * p.water.z * 34.0, in.uv.y * 52.0 + secs * 2.2);
+        let wob = vec2(noise2(q) - 0.5, noise2(q * 1.7 + vec2(13.1, secs * 1.1)) - 0.5);
+        uv += wob * vec2(0.0042, 0.0068) * heat * reach;
     }
     let inf = textureSample(info, samp, uv);
     let depth = inf.x;
