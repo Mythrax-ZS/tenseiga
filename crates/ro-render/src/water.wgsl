@@ -33,7 +33,8 @@ struct Globals {
     torch: array<vec4<f32>, 2>,
     torch_k: vec4<f32>,
     clouds: vec4<f32>,
-    // x how wet (rain on the water: rings where drops land), y how hard it rains now.
+    // x how wet (rain on the water: rings where drops land), y how hard it rains now,
+    // z how much of the water is frozen (snowy maps: 0 open .. 1 frozen over).
     wet: vec4<f32>,
     wet_sky: vec4<f32>,
 };
@@ -587,6 +588,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         color += lit * pow(stir_pattern, 3.0) * clamp(stir.z - 0.3, 0.0, 1.0) * 1.8;
         alpha = max(alpha, foam);
     }
+    // Ice on snowy maps: a shelf frozen out from the banks, floes drifting on the open water.
+    if g.wet.z > 0.0 {
+        let ice = ice_cover(p, v, shore.g * SHORE_RANGE, g.wet.z, t, sun_dir);
+        color = mix(color, ice.rgb, ice.a);
+        alpha = max(alpha, ice.a);
+    }
     // Feather the waterline: water a few hundredths of a unit deep is just wet ground, so
     // the surface fades out there instead of ending in a hard tile edge.
     let edge = smoothstep(0.0, 1.2, wet);
@@ -597,6 +604,51 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         alpha *= edge;
     }
     return vec4(color, alpha);
+}
+
+// Ice (snowy maps), `amount` 0 open water .. 1 frozen over. A shelf of ice reaches out from
+// the banks, ragged at its edge, wider the colder; past it floes (the cellular pattern's
+// cells) drift slowly on the current, more and larger with `amount`, with dark water
+// between. The ice is pale blue, dusted with snow in patches, crazed with cracks, its edges
+// a little brighter, and gives back a faint sheen of the sky. Colour and coverage (alpha).
+fn ice_cover(p: vec3<f32>, v: vec3<f32>, shore_dist: f32, amount: f32, t: f32, sun_dir: vec3<f32>) -> vec4<f32> {
+    let drift = vec2(0.21, 0.13) * t;
+    // The shelf, from the shore, its edge ragged.
+    let juv = p.xz / 31.0;
+    let jag = textureSampleGrad(detail, wrap, juv, dpdx(juv), dpdy(juv)).b;
+    let reach = mix(3.0, 30.0, amount) * (0.55 + 0.9 * jag);
+    let shelf = 1.0 - smoothstep(reach - 1.0, reach + 1.0, shore_dist);
+    // Floes: cell interiors, floating with the current; crowded where a slow field says so.
+    let fuv = (p.xz + drift) / 115.0;
+    let cell = textureSampleGrad(detail, wrap, fuv, dpdx(fuv), dpdy(fuv)).a;
+    let size = mix(0.14, 0.6, amount * amount);
+    let plate = 1.0 - smoothstep(size - 0.04, size + 0.04, cell);
+    let cuv = (p.xz + drift) / 260.0;
+    let crowd_n = textureSampleGrad(detail, wrap, cuv, dpdx(cuv), dpdy(cuv)).b;
+    let crowd = smoothstep(0.8 - amount * 0.75, 0.92 - amount * 0.75, crowd_n);
+    let floe = plate * crowd;
+    // Frozen over at the top of the range.
+    let cover = max(max(shelf, floe), smoothstep(0.9, 1.0, amount));
+    // The surface: the shelf stays put, the floes carry their texture with them.
+    let moving = select(0.0, 1.0, floe > shelf);
+    // (The dusting is taken blurred: the pattern's fine detail reads as stamped flakes.)
+    let tuv = (p.xz + drift * moving) / 37.0;
+    let grain = textureSampleGrad(detail, wrap, tuv, dpdx(tuv) * 6.0, dpdy(tuv) * 6.0).b;
+    let kuv = (p.xz + drift * moving) / 47.0 + vec2(0.37, 0.71);
+    let crack = textureSampleGrad(detail, wrap, kuv, dpdx(kuv), dpdy(kuv)).a;
+    var albedo = mix(vec3(0.55, 0.72, 0.84), vec3(0.92, 0.95, 1.0), 0.3 + 0.45 * smoothstep(0.2, 0.95, grain));
+    albedo *= 1.0 - 0.25 * smoothstep(0.9, 0.98, crack);
+    // Edges catch the light: a thin bright rim round each floe and along the shelf's edge.
+    let rim = max(plate * (1.0 - plate), shelf * (1.0 - shelf)) * 4.0 * (1.0 - smoothstep(0.9, 1.0, amount));
+    albedo = mix(albedo, vec3(0.97, 0.99, 1.0), clamp(rim, 0.0, 1.0) * 0.6);
+    var lit = albedo * (g.ambient.rgb + g.diffuse.rgb * max(sun_dir.y, 0.25));
+    // A faint sheen of the sky, and a soft glint of the sun.
+    let up = vec3(0.0, 1.0, 0.0);
+    let fr = 0.02 + 0.98 * pow(1.0 - clamp(v.y, 0.0, 1.0), 5.0);
+    lit += sky(reflect(-v, up)) * fr * 0.35;
+    let h = normalize(sun_dir + v);
+    lit += w.sun.rgb * pow(max(h.y, 0.0), 90.0) * 0.25 * smoothstep(0.0, 0.1, sun_dir.y);
+    return vec4(lit, cover);
 }
 
 // Raindrops landing: a ring spreading from each, one drop in every 5-unit cell about once a

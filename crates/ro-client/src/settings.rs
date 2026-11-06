@@ -156,6 +156,8 @@ pub struct Visual {
     pub silhouettes: bool,
     /// Footprints in snow, sand and mud; dust off dry ground.
     pub footsteps: bool,
+    /// Ice on the water of snowy maps (0 open water .. 1 frozen over).
+    pub icy_water: f32,
 }
 
 impl Default for Visual {
@@ -177,6 +179,7 @@ impl Default for Visual {
             night_lights: true,
             silhouettes: true,
             footsteps: true,
+            icy_water: 0.6,
             warmth: p.warmth,
             saturation: p.saturation,
             contrast: p.contrast,
@@ -574,6 +577,9 @@ impl Settings {
         ui.end_row();
         ui.label("Footsteps").on_hover_text("Footprints in snow, sand and mud; dust kicked up off dry dirt and sand");
         ui.checkbox(&mut v.footsteps, "");
+        ui.end_row();
+        ui.label("Icy water").on_hover_text("On snowy maps, ice reaches out from the banks and floes drift on the water; all the way up, the water freezes over");
+        ui.add(egui::Slider::new(&mut v.icy_water, 0.0..=1.0));
         ui.end_row();
         section(ui, "Look");
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Vignette"));
