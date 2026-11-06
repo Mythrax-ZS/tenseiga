@@ -626,29 +626,35 @@ struct IceAt {
     plate: f32,
     shelf: f32,
     moving: f32,
-    // Where the floes are crowded enough to be there at all.
-    crowd: f32,
 };
 
 // The ice at a point on the water (`foot`: world units per pixel there, for the mip level).
 fn ice_at(xz: vec2<f32>, amount: f32, drift: vec2<f32>, foot: f32) -> IceAt {
     let size_t = f32(textureDimensions(detail).x);
     let shore_dist = textureSampleLevel(shore_map, clamp_samp, shore_uv(xz), 0.0).g * SHORE_RANGE;
-    let jag = textureSampleLevel(detail, wrap, xz / 31.0, ice_lod(foot, 31.0, size_t)).b;
-    let reach = mix(3.0, 30.0, amount) * (0.55 + 0.9 * jag);
-    let shelf = 1.0 - smoothstep(reach - 0.6, reach + 0.6, shore_dist);
+    // How far the shelf reaches varies only slowly along the bank; its edge is made ragged
+    // by nudging the distance a unit or so either way. (Varying the reach itself quickly broke
+    // the edge up into holes in narrow channels, where the distance to the bank barely changes
+    // across the water.) Both taken blurred.
+    let j1 = textureSampleLevel(detail, wrap, xz / 97.0, ice_lod(foot, 97.0, size_t) + 3.0).b;
+    let j2 = textureSampleLevel(detail, wrap, xz / 23.0 + vec2(0.31, 0.57), ice_lod(foot, 23.0, size_t) + 2.0).b;
+    let reach = mix(3.0, 30.0, amount) * (0.65 + 0.7 * j1);
+    let edge_dist = shore_dist + (j2 - 0.5) * 3.0;
+    let shelf = 1.0 - smoothstep(reach - 0.5, reach + 0.5, edge_dist);
     let cell = textureSampleLevel(detail, wrap, (xz + drift) / 115.0, ice_lod(foot, 115.0, size_t)).a;
-    let size = mix(0.14, 0.6, amount * amount);
+    // Where the floes gather, they're large; toward open water each shrinks to a smaller,
+    // rounder piece about its cell's middle (cut off by a line instead, they broke up into
+    // splinters).
+    let crowd_n = textureSampleLevel(detail, wrap, (xz + drift) / 260.0, ice_lod(foot, 260.0, size_t) + 1.0).b;
+    let crowd = smoothstep(0.8 - amount * 0.75, 0.97 - amount * 0.75, crowd_n);
+    let size = mix(-0.05, mix(0.14, 0.6, amount * amount), crowd);
     let plate = 1.0 - smoothstep(size - 0.025, size + 0.025, cell);
-    let crowd_n = textureSampleLevel(detail, wrap, (xz + drift) / 260.0, ice_lod(foot, 260.0, size_t)).b;
-    let crowd = smoothstep(0.8 - amount * 0.75, 0.92 - amount * 0.75, crowd_n);
-    let floe = plate * crowd;
+    let floe = plate;
     var o: IceAt;
     o.cover = max(max(shelf, floe), smoothstep(0.9, 1.0, amount));
     o.plate = plate;
     o.shelf = shelf;
     o.moving = select(0.0, 1.0, floe > shelf);
-    o.crowd = crowd;
     return o;
 }
 
@@ -667,11 +673,17 @@ fn ice_cover(p: vec3<f32>, v: vec3<f32>, amount: f32, t: f32, sun_dir: vec3<f32>
     let top = ice_at(top_xz, amount, drift, foot);
     let top_k = smoothstep(0.35, 0.65, top.cover);
     // Otherwise a side: the ray enters a slab somewhere between its top and the water.
+    // Front to back: the first slab the ray meets; its side lighter near the top, darker
+    // down at the waterline.
     var side_k = 0.0;
+    var side_tone = 0.0;
     for (var i = 1; i <= 4; i++) {
         let y = ICE_THICK * (1.0 - f32(i) / 5.0);
-        side_k = max(side_k, smoothstep(0.35, 0.65, ice_at(p.xz + toward * y, amount, drift, foot).cover));
+        let hit = smoothstep(0.35, 0.65, ice_at(p.xz + toward * y, amount, drift, foot).cover) * (1.0 - side_k);
+        side_tone += hit * mix(1.2, 0.55, f32(i - 1) / 3.0);
+        side_k += hit;
     }
+    side_tone /= max(side_k, 1e-3);
     side_k *= 1.0 - top_k;
     // Open water: in the shadow of a slab between it and the sun.
     let sun_up = max(sun_dir.y, 0.15);
@@ -686,7 +698,7 @@ fn ice_cover(p: vec3<f32>, v: vec3<f32>, amount: f32, t: f32, sun_dir: vec3<f32>
     let light = g.ambient.rgb + g.diffuse.rgb * max(sun_dir.y, 0.25);
     // The sides: ice seen edge-on, a deeper glassy blue-green, lit less than the top.
     let side = vec3(0.30, 0.52, 0.62) * (g.ambient.rgb + g.diffuse.rgb * 0.45);
-    color = mix(color, side, side_k);
+    color = mix(color, side * side_tone, side_k);
 
     // The top. The shelf stays put; a floe carries its texture with it.
     let tuv = (top_xz + drift * top.moving) / 37.0;
@@ -697,11 +709,15 @@ fn ice_cover(p: vec3<f32>, v: vec3<f32>, amount: f32, t: f32, sun_dir: vec3<f32>
     let crack = textureSampleLevel(detail, wrap, kuv, ice_lod(foot, 47.0, size_t)).a;
     var albedo = mix(vec3(0.55, 0.72, 0.84), vec3(0.92, 0.95, 1.0), 0.3 + 0.45 * smoothstep(0.2, 0.95, grain));
     albedo *= 1.0 - 0.25 * smoothstep(0.9, 0.98, crack);
+    // Each floe a shade of its own (a broad, slow field carried with them), so they don't
+    // read as identical paving.
+    let tone = textureSampleLevel(detail, wrap, (top_xz + drift) / 83.0 + vec2(0.13, 0.41), ice_lod(foot, 83.0, size_t) + 4.0).b;
+    albedo *= mix(1.0, 0.82 + 0.3 * tone, top.moving);
     // The top's edge catches the light: a thin bright rim.
     let frozen = smoothstep(0.9, 1.0, amount);
     // (Only outer edges: not the shelf's line where a floe rides over it, nor a floe's
     // outline inside the shelf.)
-    let rim = max(top.plate * (1.0 - top.plate) * top.crowd * (1.0 - top.shelf), top.shelf * (1.0 - top.shelf) * (1.0 - top.plate * top.crowd)) * 4.0 * (1.0 - frozen);
+    let rim = max(top.plate * (1.0 - top.plate) * (1.0 - top.shelf), top.shelf * (1.0 - top.shelf) * (1.0 - top.plate)) * 4.0 * (1.0 - frozen);
     albedo = mix(albedo, vec3(0.97, 0.99, 1.0), clamp(rim, 0.0, 1.0) * 0.6);
     var lit = albedo * light;
     let up = vec3(0.0, 1.0, 0.0);
