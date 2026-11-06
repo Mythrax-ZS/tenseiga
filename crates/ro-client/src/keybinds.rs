@@ -68,6 +68,7 @@ const INTERFACE: &[Action] = &[
     a("bank", "Bank", "Alt+B", Does::Window("b")),
     a("cash_shop", "Cash Shop", "Alt+C", Does::Window("c")),
     a("achievements", "Achievements", "Alt+Y", Does::Window("y")),
+    a("combat", "Combat log and damage meter", "Alt+D", Does::Window("d")),
     a("attendance", "Attendance", "Alt+J", Does::Window("j")),
     a("booking", "Party Booking", "Alt+N", Does::Window("n")),
     a("chat_room", "Create a chat room", "Alt+K", Does::Window("k")),

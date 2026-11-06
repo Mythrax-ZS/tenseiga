@@ -2,6 +2,7 @@
 
 mod audio;
 mod chatlog;
+mod combat;
 mod mobinfo;
 mod mobinfo_db;
 mod skillarea;
@@ -1246,6 +1247,8 @@ struct App {
     reputation: reputation::Reputation,
     game_opts: gameopts::GameOptions,
     ranking: ranking::Ranking,
+    /// The combat log and damage meter (Alt+D).
+    combat: combat::Combat,
     store_search: storesearch::StoreSearch,
     stylist: stylist::Stylist,
     reform: reform::Reform,
@@ -2474,6 +2477,7 @@ impl App {
             "b" => self.toggle_bank(),
             "c" => self.toggle_cash_shop(),
             "y" => self.progress.open = !self.progress.open,
+            "d" => self.combat.open = !self.combat.open,
             "clan" => self.clan.open = !self.clan.open,
             "repute" => {
                 self.reputation.load(self.vfs.as_deref());
