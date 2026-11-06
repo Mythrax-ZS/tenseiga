@@ -4,6 +4,7 @@ mod audio;
 mod chatlog;
 mod skillarea;
 mod skillarea_db;
+mod photo;
 mod surface;
 mod weather;
 mod book;
@@ -1448,6 +1449,8 @@ struct App {
     /// (which foot, and a seed).
     steps: std::collections::HashMap<u32, (i32, i32)>,
     step_count: u32,
+    /// Photo mode (Ctrl+P): the world still, the interface away, the camera free.
+    photo: Option<photo::Photo>,
     /// A map the loader finished (its files' name), for enter_map to use.
     preloaded: Option<(String, anyhow::Result<LoadedMap>)>,
     /// The window has keyboard focus (off: Settings' background frame rate applies).
@@ -2992,6 +2995,21 @@ impl ApplicationHandler for App {
         if (ui_used || front_blocks) && !matches!(event, WindowEvent::Resized(_) | WindowEvent::CloseRequested | WindowEvent::ScaleFactorChanged { .. }) {
             return;
         }
+        // Photo mode: its keys move the camera (held), Esc leaves; clicks don't walk.
+        if let (Some(p), WindowEvent::KeyboardInput { event: winit::event::KeyEvent { logical_key, state, .. }, .. }) = (self.photo.as_mut(), &event) {
+            if *logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape) {
+                if *state == ElementState::Pressed {
+                    self.leave_photo();
+                }
+                return;
+            }
+            if p.key(logical_key, *state == ElementState::Pressed) {
+                return;
+            }
+        }
+        if self.photo.is_some() && matches!(event, WindowEvent::MouseInput { button: MouseButton::Left, .. }) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => el.exit(),
             _ if self.quit => el.exit(),
@@ -3045,6 +3063,33 @@ impl ApplicationHandler for App {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+impl App {
+    /// Into photo mode, or out of it.
+    pub(crate) fn toggle_photo(&mut self) {
+        if self.photo.is_some() {
+            self.leave_photo();
+            return;
+        }
+        let Some(r) = self.renderer.as_mut() else { return };
+        if self.world.is_none() {
+            return;
+        }
+        self.photo = Some(photo::Photo::new(r.camera, &r.post_settings));
+        r.camera.free = true;
+        r.set_frozen(true);
+        self.hud.push_chat(ro_net::ChatKind::System, "Photo mode: WASD moves, right-drag turns, the wheel zooms, H hides the panel, Esc leaves".into());
+    }
+
+    pub(crate) fn leave_photo(&mut self) {
+        let Some(p) = self.photo.take() else { return };
+        if let Some(r) = self.renderer.as_mut() {
+            let was = p.camera_before();
+            r.camera = ro_render::Camera { target: r.camera.target, ..was };
+            r.set_frozen(false);
         }
     }
 }
