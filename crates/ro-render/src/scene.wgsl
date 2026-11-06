@@ -72,6 +72,9 @@ struct VsOut {
     @location(2) lightmap_uv: vec2<f32>,
     @location(3) color: vec3<f32>,
     @location(4) world: vec3<f32>,
+    // x: 1 on the ground, 0 on models; y: 1 on props that never light windows. (Carried in
+    // the vertex's sway: GROUND -1 on the ground, PROP -2 on props.)
+    @location(5) @interpolate(flat) kind: vec2<f32>,
 };
 
 @vertex
@@ -84,6 +87,7 @@ fn vs_main(v: VsIn) -> VsOut {
     o.lightmap_uv = v.lightmap_uv;
     o.color = v.color;
     o.world = pos;
+    o.kind = vec2(select(0.0, 1.0, v.sway < -0.5 && v.sway > -1.5), select(0.0, 1.0, v.sway < -1.5));
     return o;
 }
 
@@ -136,8 +140,9 @@ fn fs_main(in: VsOut) -> FsOut {
     let ddy = dpdy(in.uv);
     let dwx = dpdx(in.world);
     let dwy = dpdy(in.world);
-    // The ground's lightmap coordinates run across it; every model's are one white texel.
-    let ground = select(0.0, 1.0, any(fwidth(in.lightmap_uv) > vec2(0.0)));
+    // (Told apart by the vertices, not by whether the lightmap coordinates change from pixel
+    // to pixel: interpolation noise made that flicker, lighting specks on banners at night.)
+    let ground = in.kind.x;
     var t: vec4<f32>;
     let size = vec2<f32>(textureDimensions(tex));
     let footprint = max(dot(ddx * size, ddx * size), dot(ddy * size, ddy * size));
@@ -167,7 +172,7 @@ fn fs_main(in: VsOut) -> FsOut {
     let pl = point_light(in.world, n);
     // The torch light baked into the lightmap wavers with the flame.
     let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) * (1.0 + pl.w) + srgb_to_linear(t.rgb * in.color) * pl.rgb) * torch_shadows(in.world);
-    let glow = window_glow(t.rgb, in.world, flat, ground);
+    let glow = window_glow(in.uv, ddx, ddy, in.world, flat, max(ground, in.kind.y));
     return FsOut(vec4(wet_surface(lit, in.world, flat, ground) + glow, 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
 }
 
@@ -401,28 +406,46 @@ fn sway(p: vec3<f32>, reach: f32) -> vec3<f32> {
     return (dir * bend + side * flutter * 0.6 + vec3(0.0, flutter * 0.3 - bend * bend * 0.15, 0.0)) * k;
 }
 
-// Lit windows at night: on the walls of buildings (models, facing sideways), texels that
-// read as glass (dark, and bluer than they are red or green) glow warm, as if lamps burned
-// inside. Not every window: each 8-unit patch of wall is lit or dark by a hash, and the lit
-// ones flicker very gently, like lamplight.
-fn window_glow(tex: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
+// Windows lit from within at night (models only, upright faces). Glass in RO's textures is
+// dark, greyish blue between lighter frames. Whether an area is a window is judged on a
+// heavily blurred look at the texture, so the answer holds for a whole pane rather than
+// flickering texel by texel (drawn small, that lit scattered specks, and blue banner
+// cloth); saturated blues (cloth, paint) are not glass. Within a window, the dark panes
+// glow evenly and the lighter frames stay dark (a lightly blurred look). Some windows
+// stay dark, each lit one flickers a little.
+fn window_glow(uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
     let k = g.night.x;
     if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.35 {
         return vec3(0.0);
     }
-    let lum = dot(tex, vec3(0.299, 0.587, 0.114));
-    let blue = tex.b - max(tex.r, tex.g);
-    let glass = smoothstep(0.015, 0.08, blue) * (1.0 - smoothstep(0.25, 0.45, lum));
-    if glass <= 0.0 {
+    // (A blurrier mip level picked outright: scaling the gradients instead would blur along
+    // one direction only, the sampler being anisotropic, and leave streaks.)
+    let size = vec2<f32>(textureDimensions(tex));
+    let lod = log2(max(max(length(ddx * size), length(ddy * size)), 1e-4));
+    let area = textureSampleLevel(tex, samp, uv, max(lod, 0.0) + 3.0).rgb;
+    let area_lum = dot(area, vec3(0.299, 0.587, 0.114));
+    let area_blue = area.b - max(area.r, area.g);
+    let area_sat = (max(area.r, max(area.g, area.b)) - min(area.r, min(area.g, area.b))) / max(max(area.r, max(area.g, area.b)), 1e-3);
+    let window = smoothstep(0.01, 0.045, area_blue) * (1.0 - smoothstep(0.3, 0.5, area_sat)) * (1.0 - smoothstep(0.3, 0.48, area_lum));
+    if window <= 0.0 {
         return vec3(0.0);
     }
-    let pane = floor(world / 8.0);
-    let h = cloud_hash(pane.xz + vec2(pane.y * 7.0, pane.y * 13.0));
+    // The glass glows (it's painted lighter or darker, with streaks of reflection); only
+    // the near-black bars between the panes stay dark.
+    let near = textureSampleLevel(tex, samp, uv, max(lod, 0.0) + 0.5).rgb;
+    let near_lum = dot(near, vec3(0.299, 0.587, 0.114));
+    let pane = smoothstep(0.05, 0.13, near_lum) * (0.75 + 0.5 * smoothstep(0.1, 0.5, near_lum));
+    let lit = window * pane;
+    if lit <= 0.0 {
+        return vec3(0.0);
+    }
+    let cell = floor(world / 8.0);
+    let h = cloud_hash(cell.xz + vec2(cell.y * 7.0, cell.y * 13.0));
     if h > 0.6 {
         return vec3(0.0);
     }
     let flicker = 0.92 + 0.08 * sin(g.params.x * (2.0 + h * 3.0) + h * 40.0);
-    return vec3(1.0, 0.62, 0.28) * glass * k * flicker * (2.4 + 2.0 * h);
+    return vec3(1.0, 0.62, 0.28) * lit * k * flicker * (2.0 + 1.6 * h);
 }
 
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.
