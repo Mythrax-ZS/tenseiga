@@ -144,6 +144,8 @@ pub struct Visual {
     pub render_auto: bool,
     /// Snow, rain, petals...: the server's alone, or also the client's own by climate.
     pub weather: crate::weather::WeatherMode,
+    /// Shadows of clouds drifting over outdoor maps (0 off .. 1 deep).
+    pub cloud_shadows: f32,
 }
 
 impl Default for Visual {
@@ -159,6 +161,7 @@ impl Default for Visual {
             sun_cycle: p.sun_cycle_minutes,
             water: 3,
             weather: Default::default(),
+            cloud_shadows: 0.6,
             warmth: p.warmth,
             saturation: p.saturation,
             contrast: p.contrast,
@@ -538,6 +541,9 @@ impl Settings {
                 ui.selectable_value(&mut v.weather, m, m.name());
             }
         });
+        ui.end_row();
+        ui.add_enabled_ui(v.hd2d, |ui| ui.label("Cloud shadows")).inner.on_hover_text("Shadows of clouds drifting over outdoor maps; cloudy weather brings more of them");
+        ui.add_enabled(v.hd2d, egui::Slider::new(&mut v.cloud_shadows, 0.0..=1.0));
         ui.end_row();
         section(ui, "Look");
         ui.add_enabled_ui(v.hd2d, |ui| ui.label("Vignette"));

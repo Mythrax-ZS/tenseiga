@@ -75,6 +75,9 @@ struct Globals {
     torch_vp: [[[f32; 4]; 4]; TORCHES],
     torch: [[f32; 4]; TORCHES],
     torch_k: [f32; 4],
+    /// Cloud shadows: x how much of the sun a cloud takes (0 off), y how much of the sky is
+    /// cloud (0..1), zw their drift (world units a second).
+    clouds: [f32; 4],
 }
 
 /// Torches near the player that cast sprite shadows, each with a shadow map.
@@ -266,6 +269,9 @@ pub struct Renderer {
     pub weather: Vec<WeatherLayer>,
     /// STR effects playing this frame; the client advances and removes them.
     pub effects: Vec<Fx>,
+    /// Cloud shadows drifting over outdoor maps (0 off .. 1 deep): how much of the sun a
+    /// passing cloud takes on a fair day; cloudy weather brings more of them, and deeper.
+    pub cloud_shadows: f32,
     /// Draw skill effects (STR and code-drawn); the original's /effect turns them off.
     pub show_effects: bool,
     effect_pipeline: wgpu::RenderPipeline,
@@ -710,6 +716,7 @@ impl Renderer {
             particles,
             weather_pass,
             weather: vec![],
+            cloud_shadows: 0.0,
             effects: vec![],
             show_effects: true,
             effect_pipeline,
@@ -1117,6 +1124,32 @@ impl Renderer {
         (self.config.width, self.config.height)
     }
 
+    /// The globals' cloud shadows: outdoors only (not indoors, underwater, or with the HD-2D
+    /// look off), more and deeper under cloudy weather.
+    fn cloud_globals(&self) -> [f32; 4] {
+        let on = self.cloud_shadows > 0.0 && self.post_settings.enabled && self.room.is_none() && self.underwater <= 0.0 && self.sky_profile.is_some();
+        if !on {
+            return [0.0; 4];
+        }
+        let (mut cover, mut depth) = (0.3, 1.0);
+        if self.show_effects {
+            for w in &self.weather {
+                let s = w.strength.clamp(0.0, 1.0);
+                let (c, d) = match w.kind {
+                    WeatherKind::Clouds => (0.35, 0.2),
+                    WeatherKind::Fog => (0.2, 0.0),
+                    WeatherKind::Rain => (0.45, 0.1),
+                    WeatherKind::Snow => (0.25, 0.0),
+                    WeatherKind::Petals | WeatherKind::Leaves => (0.0, 0.0),
+                };
+                cover += c * s;
+                depth += d * s;
+            }
+        }
+        // The clouds' wind (weather.rs): a cell a second east, a third of that north.
+        [(self.cloud_shadows * 0.7 * depth).min(0.95), cover.min(0.9), 1.0 * CELL, 0.35 * CELL]
+    }
+
     /// World-space ray (origin, unit direction) through a window pixel.
     pub fn ray(&self, px: f32, py: f32) -> (glam::Vec3, glam::Vec3) {
         let (w, h) = (self.config.width as f32, self.config.height as f32);
@@ -1403,6 +1436,7 @@ impl Renderer {
             torch_vp: std::array::from_fn(|i| torch_vps.get(i).map_or([[0.0; 4]; 4], |m| m.to_cols_array_2d())),
             torch: std::array::from_fn(|i| torches.get(i).map_or([0.0; 4], |(l, _)| l.pos.extend(l.range).to_array())),
             torch_k: [torches.first().map_or(0.0, |t| t.1), torches.get(1).map_or(0.0, |t| t.1), 1.0 / shadow::TORCH_SIZE as f32, 0.0],
+            clouds: self.cloud_globals(),
             upscale: [if self.upscale_runtime { 1.0 } else { 0.0 }, if self.post_settings.enabled { self.post_settings.relief } else { 0.0 }, 0.0, 0.0],
             // Outdoors only: interiors and dungeons keep their hand-baked light and shadow.
             rt: {
