@@ -1641,6 +1641,12 @@ impl App {
                         self.spike_line(from, to);
                     }
                 }
+                // Jupitel Thunder: a ball of lightning hurled at the target.
+                if skill == 84 {
+                    if let (Some(from), Some(to)) = (self.unit_pos(act.src), self.unit_pos(target)) {
+                        self.jupitel_fx(from, to);
+                    }
+                }
                 // Soul Breaker: a ball of energy hurled at the target.
                 if skill == 379 {
                     if let (Some(from), Some(to)) = (self.unit_pos(act.src), self.unit_pos(target)) {
@@ -1656,7 +1662,7 @@ impl App {
                 }
                 self.log_combat(skill, &act);
                 self.act(act);
-                self.skill_fx(skill, self.unit_pos(target), true);
+                self.skill_hit_fx(skill, self.unit_pos(target));
             }
             SkillAt { skill, src, cell } => {
                 if src == self.account_id {

@@ -22,6 +22,13 @@ impl App {
                     r.effects.push(ro_render::Fx { asset, pos, time_ms: 0.0, looping: false, tag: 0 });
                 }
             }
+            Some(fx::Visual::OneOf(names)) => {
+                self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let name = names[(self.spark_seed >> 16) as usize % names.len()];
+                if let Some(asset) = self.fx.get(r, vfs, name) {
+                    r.effects.push(ro_render::Fx { asset, pos, time_ms: 0.0, looping: false, tag: 0 });
+                }
+            }
             Some(fx::Visual::Column(tex, color)) => {
                 if let Some(tex) = self.fx.texture(r, vfs, tex) {
                     let shape = ro_render::Shape::Column { radius: 0.9, height: 3.5 };
@@ -48,7 +55,7 @@ impl App {
                     self.sprite_fx.push((actor, ms));
                 }
             }
-            Some(fx::Visual::Code) => {}
+            Some(fx::Visual::Code) => self.wizard_fx(skill, pos),
             Some(fx::Visual::Tenseiga) => {
                 for &(part, texture, duration_ms, color) in fx::tenseiga_layers(skill) {
                     let Some(tex) = self.fx.fx_texture(r, vfs, texture) else { continue };
@@ -79,14 +86,67 @@ impl App {
         }
     }
 
-    /// Earth spikes erupting in a wave from `from` toward `to` (Grimtooth).
+    /// A skill's effect on a target it hit: its own effect for single-target skills, a small
+    /// hit for area skills (whose own effect played once, where they were cast).
+    pub(crate) fn skill_hit_fx(&mut self, skill: u16, pos: Option<glam::Vec3>) {
+        match fx::skill_hit(skill) {
+            fx::HitVisual::Own => self.skill_fx(skill, pos, true),
+            fx::HitVisual::Nothing => {}
+            fx::HitVisual::OneOf(names) => {
+                self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let name = names[(self.spark_seed >> 16) as usize % names.len()];
+                if let Some(pos) = pos {
+                    self.play_fx(name, pos);
+                }
+            }
+        }
+    }
+
+    /// The Wizard's effects the original client draws in code, at `pos` (the caster for Frost
+    /// Nova and Sightrasher, the target for Earth Spike, the cell for Heaven's Drive).
+    pub(crate) fn wizard_fx(&mut self, skill: u16, pos: glam::Vec3) {
+        let cell = ro_render::CELL;
+        match skill {
+            // Sightrasher: a ring of fire bursting out from the caster.
+            81 => {
+                self.proc_fx("fire_a.bmp", ro_render::Shape::Wave { radius: 3.5 }, pos, [1.0, 0.55, 0.25], 700.0);
+                self.play_fx("firehit2", pos);
+            }
+            // Frost Nova: a ring of ice bursting out from the caster.
+            88 => {
+                self.proc_fx("freeze_ice.bmp", ro_render::Shape::Wave { radius: 2.5 }, pos, [0.6, 0.85, 1.0], 800.0);
+            }
+            // Earth Spike: spikes of stone thrusting up under the target.
+            90 => {
+                let half = glam::Vec3::new(0.6 * cell, 0.0, 0.4 * cell);
+                self.spike_line(pos - half, pos + half);
+                self.play_fx("earthhit", pos);
+            }
+            // Heaven's Drive: spikes thrusting up across its five cells square.
+            91 => {
+                for (a, b) in [((-2.5, -2.5), (2.5, 2.5)), ((-2.5, 2.5), (2.5, -2.5)), ((-2.5, 0.0), (2.5, 0.0))] {
+                    let at = |(x, z): (f32, f32)| pos + glam::Vec3::new(x * cell, 0.0, z * cell);
+                    self.spike_line(at(a), at(b));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Jupitel Thunder: a ball of lightning flying from the caster to its target.
+    pub(crate) fn jupitel_fx(&mut self, from: glam::Vec3, to: glam::Vec3) {
+        self.proc_fx("thunder_ball_a.bmp", ro_render::Shape::Orb { reach: to - from }, from, [0.75, 0.85, 1.0], 500.0);
+    }
+
+    /// Spikes of rock erupting in a wave from `from` toward `to` (Grimtooth, Earth Spike,
+    /// Heaven's Drive), effect\stone.bmp's rock.
     pub(crate) fn spike_line(&mut self, from: glam::Vec3, to: glam::Vec3) {
         let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
-        let Some(tex) = self.fx.texture(r, vfs, "dustblast_stick.bmp") else { return };
+        let Some(tex) = self.fx.texture(r, vfs, "stone.bmp") else { return };
         let reach = to - from;
         let count = ((reach.length() / ro_render::CELL) as u32).clamp(3, 12);
         let shape = ro_render::Shape::Spikes { reach, count };
-        r.procs.push(ro_render::ProcFx { tex, shape, pos: from, color: [0.85, 0.7, 0.5], time_ms: 0.0, duration_ms: 650.0 });
+        r.procs.push(ro_render::ProcFx { tex, shape, pos: from, color: [0.95, 0.88, 0.78], time_ms: 0.0, duration_ms: 800.0 });
     }
 
     pub(crate) fn proc_fx(&mut self, tex: &'static str, shape: ro_render::Shape, pos: glam::Vec3, color: [f32; 3], duration_ms: f32) {

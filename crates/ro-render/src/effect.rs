@@ -67,7 +67,8 @@ pub enum Shape {
     Column { radius: f32, height: f32 },
     /// A flat circle on the ground, turning (radius in cells, turns per second).
     Disc { radius: f32, spin: f32 },
-    /// Spikes erupting in a wave along `reach` (world offset from `pos`), like Grimtooth.
+    /// Spikes of rock erupting in a wave along `reach` (world offset from `pos`), like
+    /// Grimtooth: solid (alpha-blended) cones, their faces lit from one side.
     Spikes { reach: Vec3, count: u32 },
     /// A shockwave wall expanding to `radius` cells.
     Wave { radius: f32 },
@@ -259,7 +260,7 @@ pub enum AuraLayer {
 impl ProcFx {
     /// Drawn alpha-blended (darkening) rather than added.
     pub fn shades(&self) -> bool {
-        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. } | Shape::Footprint { .. } | Shape::Dust { .. })
+        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. } | Shape::Footprint { .. } | Shape::Dust { .. } | Shape::Spikes { .. })
     }
 }
 
@@ -792,13 +793,21 @@ impl ProcFx {
                     let base = self.pos + reach * f + jitter;
                     let h = CELL * (2.2 + 1.0 * ((i * 7 % 5) as f32 / 4.0)) * rise;
                     let r = CELL * 0.4;
-                    let c = [color[0], color[1], color[2], color[3] * rise.min(1.0)];
-                    let apex = base + Vec3::new(0.0, h, 0.0);
+                    // Solid while up: it shows by its height, fading only as it all but sinks.
+                    let alpha = color[3] * (rise * 4.0).min(1.0);
+                    // Leaning a little, each its own way, so a line of them looks broken rock.
+                    let lean = Vec3::new(((i * 5 % 7) as f32 / 6.0 - 0.5) * 0.5, 0.0, ((i * 3 % 5) as f32 / 4.0 - 0.5) * 0.5) * h * 0.3;
+                    let apex = base + Vec3::new(0.0, h, 0.0) + lean;
+                    // Faces lit from above one side, so the cone reads as rock in the round.
+                    let light = Vec3::new(0.45, 0.75, -0.5).normalize();
                     for k in 0..5 {
                         let a0 = k as f32 / 5.0 * std::f32::consts::TAU;
                         let a1 = (k + 1) as f32 / 5.0 * std::f32::consts::TAU;
                         let p0 = base + Vec3::new(a0.cos() * r, 0.0, a0.sin() * r);
                         let p1 = base + Vec3::new(a1.cos() * r, 0.0, a1.sin() * r);
+                        let normal = (p1 - p0).cross(apex - p0).normalize_or_zero();
+                        let lit = 0.4 + 0.6 * normal.dot(light).abs();
+                        let c = [color[0] * lit, color[1] * lit, color[2] * lit, alpha];
                         let (u0, u1) = (k as f32 / 5.0, (k + 1) as f32 / 5.0);
                         out.extend([
                             Vertex { pos: p0.into(), uv: [u0, 1.0], color: c },

@@ -8,6 +8,8 @@ use std::collections::HashMap;
 pub enum Visual {
     /// An STR animation (data\texture\effect\<name>.str).
     Str(&'static str),
+    /// One of these STR animations, chosen at random each time (Meteor Storm's four meteors).
+    OneOf(&'static [&'static str]),
     /// A code-drawn column of light textured with data\texture\effect\<tex>, tinted.
     Column(&'static str, [f32; 3]),
     /// A sprite effect (data\sprite\이팩트\<name>.spr/.act) played once.
@@ -114,10 +116,49 @@ pub fn skill_visual(skill: u16) -> Option<Visual> {
         19 => Visual::Str("firehit1"),
         20 | 84 => Visual::Str("lightning"),
         21 => Visual::Str("thunderstorm"),
-        83 => Visual::Str("meteor1"),
+        // The original client's own (as roBrowser's effect tables have them): each meteor one
+        // of four; Lord of Vermilion's storm of lightning.
+        83 => Visual::OneOf(&["meteor1", "meteor2", "meteor3", "meteor4"]),
+        85 => Visual::Str("lord"),
+        // Drawn in code by the original client (see App::wizard_fx): Sightrasher, Frost Nova,
+        // Earth Spike, Heaven's Drive.
+        81 | 88 | 90 | 91 => Visual::Code,
         379 | 406 => Visual::Code,
         _ => Visual::Str(skill_str(skill)?),
     })
+}
+
+/// What shows on each target a skill hits (ZC_NOTIFY_SKILL).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HitVisual {
+    /// The skill's own effect (`skill_visual`), on the target: bolts and other single-target
+    /// skills, whose effect is the hit.
+    Own,
+    /// Nothing more: the area effect already plays where it was cast (Storm Gust).
+    Nothing,
+    /// A small hit effect, one of these STRs at random: area skills, whose own effect plays
+    /// once where they were cast and would otherwise play again on every target, every tick.
+    OneOf(&'static [&'static str]),
+}
+
+/// How each target a skill hits looks (the original client's hit effects, as roBrowser's
+/// effect tables have them).
+pub fn skill_hit(skill: u16) -> HitVisual {
+    const WIND: &[&str] = &["windhit1", "windhit2", "windhit3"];
+    const FIRE: &[&str] = &["firehit1", "firehit2", "firehit3"];
+    match skill {
+        // Thunderstorm, Lord of Vermilion.
+        21 | 85 => HitVisual::OneOf(WIND),
+        // Fire Wall, Sightrasher, Meteor Storm.
+        18 | 81 | 83 => HitVisual::OneOf(FIRE),
+        // Frost Nova.
+        88 => HitVisual::OneOf(&["icecrash"]),
+        // Heaven's Drive.
+        91 => HitVisual::OneOf(&["earthhit"]),
+        // Storm Gust.
+        89 => HitVisual::Nothing,
+        _ => HitVisual::Own,
+    }
 }
 
 /// Lasting ground effects (ZC_SKILL_ENTRY unit types), looped until they end.
@@ -238,6 +279,31 @@ fn skill_str(skill: u16) -> Option<&'static str> {
         255 => "devotion",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn area_spells_play_their_effect_once_and_a_small_hit_on_each_target() {
+        // Lord of Vermilion: its storm where it was cast, wind hits on the targets.
+        assert_eq!(skill_visual(85), Some(Visual::Str("lord")));
+        assert!(matches!(skill_hit(85), HitVisual::OneOf(h) if h.contains(&"windhit1")));
+        // Meteor Storm: one of four meteors; fire hits.
+        assert!(matches!(skill_visual(83), Some(Visual::OneOf(m)) if m.len() == 4));
+        assert!(matches!(skill_hit(83), HitVisual::OneOf(h) if h.contains(&"firehit2")));
+        // Storm Gust never replays its blizzard on each target.
+        assert_eq!(skill_hit(89), HitVisual::Nothing);
+        // A bolt's effect is its hit; Earth Spike's spikes are drawn on its target.
+        assert_eq!(skill_hit(19), HitVisual::Own);
+        assert_eq!((skill_visual(90), skill_hit(90)), (Some(Visual::Code), HitVisual::Own));
+        // Heaven's Drive, Frost Nova and Sightrasher: drawn once, a small hit on each target.
+        for skill in [81, 88, 91] {
+            assert_eq!(skill_visual(skill), Some(Visual::Code));
+            assert!(matches!(skill_hit(skill), HitVisual::OneOf(_)));
+        }
+    }
 }
 
 /// Effect for a ZC_NOTIFY_EFFECT id.
