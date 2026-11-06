@@ -41,6 +41,25 @@ fn vs_main(@location(0) pos: vec3<f32>, @location(1) uv: vec2<f32>, @location(2)
     return o;
 }
 
+// Emitters with depth testing off (`zenable` 0) shouldn't show through the cliff in front
+// of them, only not clip into the rock or ground they rise from: they're tested at a depth
+// pulled this far (world units, 2.5 cells) toward the camera.
+const NO_Z_PULL: f32 = 12.5;
+
+@vertex
+fn vs_pulled(@location(0) pos: vec3<f32>, @location(1) uv: vec2<f32>, @location(2) color: vec4<f32>) -> VsOut {
+    var o: VsOut;
+    o.pos = g.view_proj * vec4(pos, 1.0);
+    o.uv = uv;
+    o.color = color;
+    o.world = pos;
+    let toward = g.eye.xyz - pos;
+    let pulled = pos + toward * min(NO_Z_PULL / max(length(toward), 1e-3), 0.9);
+    let d = g.view_proj * vec4(pulled, 1.0);
+    o.pos.z = d.z / d.w * o.pos.w;
+    return o;
+}
+
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, c <= vec3(0.04045));
 }
