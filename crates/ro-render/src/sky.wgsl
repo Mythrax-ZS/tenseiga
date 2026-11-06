@@ -6,6 +6,7 @@
 struct Sky {
     zenith: vec4<f32>,
     horizon: vec4<f32>,
+    // w: storminess (0 fair .. 1 heavy rain): a dark, heavy deck with ragged scud below.
     cloud: vec4<f32>,
     // Cloud cover, scale, wind speed, haze.
     clouds: vec4<f32>,
@@ -234,10 +235,27 @@ fn fs_main(input: VsOut) -> FsOut {
     let rim = pow(sun_alignment, 5.0) * density * (1.0 - smoothstep(0.0, 0.55, density)) * 3.0;
     let shadow = mix(s.horizon.rgb, s.cloud.rgb, 0.45) * 0.8;
     let day_cloud = mix(shadow, s.cloud.rgb * 1.08, lit) + s.cloud.rgb * (rim + sun_glow * 0.15);
-    let night_cloud = mix(night_bottom, s.cloud.rgb * vec3(0.08, 0.10, 0.17), lit);
+    var night_cloud = mix(night_bottom, s.cloud.rgb * vec3(0.08, 0.10, 0.17), lit);
+    // A storm deck: under full cover every part of it lies in the same shade, so it would
+    // read as one flat grey. Broad, slow swells darken some masses and leave others lighter.
+    let storm = s.cloud.w;
+    var storm_cloud = day_cloud;
+    if storm > 0.0 {
+        let swell = gfbm(wp * 0.55 + vec2(3.1, 7.7), 4, detail);
+        let shade = mix(1.0, 0.5 + 0.75 * smoothstep(-0.35, 0.35, swell), storm);
+        storm_cloud = day_cloud * shade;
+        night_cloud *= mix(1.0, shade, 0.6);
+    }
     // Clouds settle into the horizon haze, thin out far off, and soften at night.
     let opacity = density * mix(0.6, 0.97, smoothstep(0.0, 0.3, height)) * (1.0 - night * 0.15) * (1.0 - 0.75 * smoothstep(6.0, 15.0, far));
-    color = mix(color, mix(day_cloud, night_cloud, night), opacity);
+    color = mix(color, mix(storm_cloud, night_cloud, night), opacity);
+    // Scud: low, dark, ragged cloud racing under the deck in a storm.
+    if storm > 0.0 {
+        let lp = plane * s.clouds.y * 1.7 + wind * 2.6 + seeded * 0.7;
+        let rag = 0.5 + gfbm(lp, 5, detail) * 1.2;
+        let scud = smoothstep(0.52, 0.72, rag) * storm * 0.55 * smoothstep(0.0, 0.25, height) * (1.0 - smoothstep(6.0, 14.0, far));
+        color = mix(color, mix(shadow * 0.55, night_bottom * 0.8, night), scud);
+    }
 
     // A sparse, antialiased star field, tied to map bearing rather than screen pixels.
     // Wrapping the longitude cell keeps the same stars when rotating across north.

@@ -123,12 +123,13 @@ impl Sky {
         seconds: f32,
         night: f32,
         sun_direction: [f32; 3],
+        storm: f32,
     ) {
         let sun = -glam::Vec3::from(sun_direction).try_normalize().unwrap_or(glam::Vec3::NEG_Y);
         let uniform = Uniform {
             zenith: [profile.zenith[0], profile.zenith[1], profile.zenith[2], 0.0],
             horizon: [profile.horizon[0], profile.horizon[1], profile.horizon[2], 0.0],
-            cloud: [profile.cloud[0], profile.cloud[1], profile.cloud[2], 0.0],
+            cloud: [profile.cloud[0], profile.cloud[1], profile.cloud[2], storm.clamp(0.0, 1.0)],
             clouds: [profile.cloud_cover, profile.cloud_scale, profile.wind_speed, profile.haze],
             time: [seconds, night.clamp(0.0, 1.0), profile.stars, profile.seed],
             camera: [camera.yaw, camera.pitch, aspect.max(0.01), camera.fovy],
