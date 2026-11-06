@@ -224,6 +224,18 @@ impl App {
         let damage = if act.kind == 11 { 0 } else { act.damage + act.left_damage };
         let hit = combat::Hit { by, skill, skill_name, other, damage, hits: act.hits.max(1) as u16, crit: act.kind == 10, stamp: chrono::Local::now().format("%H:%M:%S").to_string() };
         self.combat.record(hit, std::time::Instant::now());
+        // The target frame: the monster we hit, else one hitting us when we have none.
+        let now = std::time::Instant::now();
+        let monster = |id: u32| self.units.get(&id).is_some_and(|m| m.kind == 5);
+        if by == Some(combat::Source::Me) && monster(act.target) {
+            self.focus = Some((act.target, now));
+        } else if by.is_none() && monster(act.src) {
+            match self.focus {
+                Some((id, _)) if id == act.src => self.focus = Some((id, now)),
+                Some((id, last)) if targetframe::keeps(last, now) && self.units.contains_key(&id) => {}
+                _ => self.focus = Some((act.src, now)),
+            }
+        }
     }
 
     pub(crate) fn act(&mut self, act: ro_net::Act) {

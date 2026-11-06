@@ -1374,6 +1374,7 @@ impl App {
                 }
                 if c.ms > 0 {
                     self.casts.insert(c.src, (0.0, c.ms as f32));
+                    self.cast_skill.insert(c.src, c.skill);
                     // The magic circle under the caster while chanting.
                     if let (Some(pos), Some(r), Some(vfs)) = (self.unit_pos(c.src), self.renderer.as_mut(), self.vfs.as_deref()) {
                         if let Some(tex) = self.fx.texture(r, vfs, "magic_target.tga") {
