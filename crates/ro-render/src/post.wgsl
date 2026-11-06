@@ -273,7 +273,8 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // from the focal plane so tall foreground models and the far map blur too.
     let band = smoothstep(p.dof.z, p.dof.z + p.dof.w, abs(in.uv.y - p.dof.y));
     let away = smoothstep(0.0, p.depth.y, abs(depth - p.depth.x) - p.depth.x * 0.15);
-    let t = max(band * 0.7, away) * p.dof.x;
+    // The sky stays nearly sharp: it is far, but a blurred backdrop only looks smeared.
+    let t = max(band * 0.7, away) * p.dof.x * select(1.0, 0.15, depth >= 50000.0);
     let blur_ao = mix(1.0, textureSample(ao_tex, samp, in.uv).r, 1.0 - inf.y);
     var c = mix(sharp, textureSample(blurred, samp, in.uv).rgb * blur_ao, t);
     // Distance haze matches the backdrop's vertical gradient outdoors; interiors keep
