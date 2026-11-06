@@ -27,6 +27,16 @@ pub const GROUND: f32 = -1.0;
 pub const PROP: f32 = -2.0;
 /// Models narrower than this across (world units, both ways) are props, not buildings.
 const PROP_SPAN: f32 = 14.0;
+/// Triangles thinner than this (world units) are poles, posts and trim, never windows.
+const THIN: f32 = 1.5;
+
+/// A triangle's least height (twice its area over its longest side): small for a sliver of
+/// a pole however long it is, large for a pane of a window.
+fn thinness(tri: &[Vertex; 3]) -> f32 {
+    let [a, b, c] = tri.map(|v| Vec3::from(v.pos));
+    let longest = (b - a).length().max((c - b).length()).max((a - c).length());
+    (b - a).cross(c - a).length() / longest.max(1e-4)
+}
 
 /// Models whose names say they're cloth, signs or lamps (휘장 banner, 깃발 flag, 가로등
 /// street lamp, 간판 sign, 천막 tent, 현수막 hanging banner, 장막 curtain, 파라솔 parasol,
@@ -354,7 +364,8 @@ impl<'a> SceneBuilder<'a> {
             let span = (hi - lo).max(Vec3::ZERO);
             let prop = span.x.max(span.z) < PROP_SPAN || no_windows(&inst.file);
             for (t, mut tri) in tris {
-                if prop {
+                // Thin pieces (poles, posts, railings, a spire) are never a window either.
+                if prop || thinness(&tri) < THIN {
                     for v in &mut tri {
                         v.sway = PROP;
                     }

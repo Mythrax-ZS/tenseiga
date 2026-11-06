@@ -415,18 +415,23 @@ fn sway(p: vec3<f32>, reach: f32) -> vec3<f32> {
 // stay dark, each lit one flickers a little.
 fn window_glow(uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
     let k = g.night.x;
-    if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.35 {
+    // Walls only: near-vertical faces (a steep roof of dark blue slate reads just like glass).
+    if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.12 {
         return vec3(0.0);
     }
     // (A blurrier mip level picked outright: scaling the gradients instead would blur along
     // one direction only, the sampler being anisotropic, and leave streaks.)
     let size = vec2<f32>(textureDimensions(tex));
     let lod = log2(max(max(length(ddx * size), length(ddy * size)), 1e-4));
-    let area = textureSampleLevel(tex, samp, uv, max(lod, 0.0) + 3.0).rgb;
+    let area4 = textureSampleLevel(tex, samp, uv, max(lod, 0.0) + 3.0);
+    let area = area4.rgb;
     let area_lum = dot(area, vec3(0.299, 0.587, 0.114));
     let area_blue = area.b - max(area.r, area.g);
     let area_sat = (max(area.r, max(area.g, area.b)) - min(area.r, min(area.g, area.b))) / max(max(area.r, max(area.g, area.b)), 1e-3);
-    let window = smoothstep(0.01, 0.045, area_blue) * (1.0 - smoothstep(0.3, 0.5, area_sat)) * (1.0 - smoothstep(0.3, 0.48, area_lum));
+    // Glass sits inside a solid wall: near a texture's see-through parts (a stall's poles,
+    // an awning's edge) the blur takes in the transparent texels' colour and can look like
+    // glass, so only areas fully opaque count.
+    let window = smoothstep(0.01, 0.045, area_blue) * (1.0 - smoothstep(0.3, 0.5, area_sat)) * (1.0 - smoothstep(0.3, 0.48, area_lum)) * smoothstep(0.97, 0.995, area4.a);
     if window <= 0.0 {
         return vec3(0.0);
     }
