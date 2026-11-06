@@ -1253,6 +1253,47 @@ impl Renderer {
         base * (1.0 - self.night_t * 0.85) * (1.0 - cooled.clamp(0.0, 1.0))
     }
 
+    /// The map's sky profile under the weather now. Rain greys the sky over (dark, heavy,
+    /// solid cloud, more haze, a stronger wind); snow greys it paler; drifting cloud and fog
+    /// a little; a lightning flash lights the clouds up from within. Overcast hides the
+    /// stars. Open space (the galaxy) and weather turned off keep the profile as it is.
+    fn weathered_sky(&self) -> Option<SkyProfile> {
+        let mut p = *self.sky_profile.as_ref()?;
+        if p.galaxy || !self.show_effects {
+            return Some(p);
+        }
+        let o = weather::overcast(&self.weather);
+        let flash = self.lightning.clamp(0.0, 1.0);
+        if o <= 0.0 && flash <= 0.0 {
+            return Some(p);
+        }
+        let of = |kind: WeatherKind| self.weather.iter().filter(|w| w.kind == kind).map(|w| w.strength.clamp(0.0, 1.0)).fold(0.0, f32::max);
+        let (rain, snow) = (of(WeatherKind::Rain), of(WeatherKind::Snow));
+        // How dark the grey: rain clouds are dark, snow clouds pale, plain cloud between.
+        let tone = if rain + snow > 0.0 { 0.92 - 0.56 * rain / (rain + snow) } else { 0.8 };
+        let k = (o * 1.15).min(0.92);
+        let grey = |c: [f32; 3], t: f32| {
+            let c = glam::Vec3::from(c);
+            c.lerp(glam::Vec3::splat(c.dot(glam::Vec3::new(0.3, 0.59, 0.11)) * t), k)
+        };
+        let mut zenith = grey(p.zenith, tone * 0.9);
+        let mut horizon = grey(p.horizon, tone);
+        let mut cloud = grey(p.cloud, tone * 0.85);
+        // Lightning: the cloud deck lights up cold white from within.
+        let cold = glam::Vec3::new(0.8, 0.86, 1.0);
+        zenith += cold * flash * 0.5;
+        horizon += cold * flash * 0.35;
+        cloud += cold * flash * 1.4;
+        p.zenith = zenith.to_array();
+        p.horizon = horizon.to_array();
+        p.cloud = cloud.to_array();
+        p.cloud_cover += (1.0 - p.cloud_cover) * (o * 1.25).min(1.0);
+        p.haze += (1.0 - p.haze) * o * 0.8;
+        p.wind_speed *= 1.0 + o;
+        p.stars *= 1.0 - (o * 1.3).min(1.0);
+        Some(p)
+    }
+
     /// How much of the water is frozen: snowy maps outdoors only.
     fn ice(&self) -> f32 {
         match self.sky_profile.as_ref() {
@@ -1555,6 +1596,10 @@ impl Renderer {
                 [l.pos.extend(l.range).to_array(), (glam::Vec3::from(l.color) * f).extend(f - 1.0).to_array()]
             }).collect()
         };
+        // The sky as the weather has it: grey and overcast in rain, pale in snow, lit up by
+        // lightning. The sky itself, the haze far things fade into and what wet ground
+        // mirrors all take it.
+        let weathered = self.weathered_sky();
         let globals = Globals {
             view_proj: cam.view_proj(aspect).to_cols_array_2d(),
             focus: [cam.target.x, CELL, cam.target.z, cam.distance * 4.0],
@@ -1603,14 +1648,11 @@ impl Renderer {
             // Windows light up as night falls, outdoors (interiors keep their own light).
             night: [if self.night_lights && self.sky_profile.is_some() && self.room.is_none() { self.night_t * 1.6 } else { 0.0 }, 0.0, 0.0, 0.0],
             wet: [if self.post_settings.enabled { self.wetness } else { 0.0 }, self.raining(), self.ice(), 0.0],
-            wet_sky: match self.sky_profile.as_ref() {
+            // What wet ground and puddles mirror: the sky as the weather has it (grey in rain).
+            wet_sky: match weathered.as_ref() {
                 Some(p) => {
-                    // Under rain the sky is grey: the clear sky's colour, washed out by the gloom.
                     let (h, z) = (glam::Vec3::from(sky::horizon_color(p, self.night_t)), glam::Vec3::from(sky::zenith_color(p, self.night_t)));
-                    let clear = h.lerp(z, 0.4);
-                    let grey = glam::Vec3::splat(clear.dot(glam::Vec3::new(0.3, 0.59, 0.11)) * 0.75);
-                    let o = if self.show_effects { weather::overcast(&self.weather) } else { 0.0 };
-                    clear.lerp(grey, (o * 1.1).min(0.9)).extend(0.0).to_array()
+                    h.lerp(z, 0.4).extend(0.0).to_array()
                 }
                 None => [0.0; 4],
             },
@@ -1626,7 +1668,7 @@ impl Renderer {
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let outdoor_sky = self.scene.is_some() && self.room.is_none() && self.underwater <= 0.0 && self.sky_profile.is_some();
         if outdoor_sky {
-            self.sky.update(&self.queue, self.sky_profile.as_ref().unwrap(), cam, aspect, self.secs(), self.night_t, self.shadow_dir().to_array());
+            self.sky.update(&self.queue, weathered.as_ref().unwrap(), cam, aspect, self.secs(), self.night_t, self.shadow_dir().to_array(), self.raining());
         }
 
         // Sprites, back to front by distance from the eye so blended edges composite.
@@ -1899,7 +1941,7 @@ impl Renderer {
             let amb = glam::Vec3::from(self.lighting.ambient);
             // Haze: the map's ambient light lifted toward a pale sky, in linear space.
             let fog = if outdoor_sky {
-                glam::Vec3::from(sky::horizon_color(self.sky_profile.as_ref().unwrap(), self.night_t))
+                glam::Vec3::from(sky::horizon_color(weathered.as_ref().unwrap(), self.night_t))
             } else {
                 amb.lerp(glam::Vec3::new(0.85, 0.88, 0.95), 0.6).powf(2.2)
             };
@@ -1910,7 +1952,7 @@ impl Renderer {
                 },
                 focus: cam.distance,
                 fog_color: fog.to_array(),
-                sky: self.sky_profile.as_ref().filter(|_| outdoor_sky).map(|profile| post::SkyFog {
+                sky: weathered.as_ref().filter(|_| outdoor_sky).map(|profile| post::SkyFog {
                     zenith: sky::zenith_color(profile, self.night_t),
                     gradient: 0.7 + profile.haze * 0.4,
                     height_offset: (50f32.to_radians() - cam.pitch) * 0.3 / 0.82,
