@@ -309,6 +309,8 @@ pub struct Renderer {
     frozen_for: std::time::Duration,
     /// The grid is drawn instead while no map is loaded.
     scene: Option<scene::Scene>,
+    /// While a new map's textures go up (Scene::pump): since when, over how many frames.
+    uploading: Option<(std::time::Instant, u32)>,
     pub lighting: Lighting,
     pub camera: Camera,
     pub scale_factor: f64,
@@ -742,6 +744,7 @@ impl Renderer {
             sampler,
             lightmap_sampler,
             scene: None,
+            uploading: None,
             water_pipeline,
             water_layout,
             water_screen_layout,
@@ -834,16 +837,38 @@ impl Renderer {
         self.scene = Some(scene::Scene::upload(
             &self.device,
             &self.queue,
-            &self.texture_layout,
-            &self.sampler,
-            &self.lightmap_sampler,
             mesh,
             prepared.textures,
             prepared.windows,
         ));
+        self.uploading = Some((std::time::Instant::now(), 0));
         self.lighting = lighting;
         self.water = None;
         self.sky_profile = None;
+    }
+
+    /// How much of the map's textures is on the GPU (0..1) while they go up over the frames
+    /// after `set_prepared_scene`, or None once all are (keep the loading screen up till then).
+    pub fn upload_progress(&self) -> Option<f32> {
+        self.scene.as_ref().and_then(scene::Scene::progress)
+    }
+
+    /// Uploads the rest of the map's textures now (captures, which draw one frame).
+    pub fn finish_uploads(&mut self) {
+        self.pump_uploads(None);
+    }
+
+    /// Uploads waiting map textures for up to `budget` (None: all of them).
+    fn pump_uploads(&mut self, budget: Option<std::time::Duration>) {
+        let Some(s) = self.scene.as_mut() else { return };
+        s.pump(&self.device, &self.queue, &self.texture_layout, &self.sampler, &self.lightmap_sampler, budget);
+        if let Some((since, frames)) = self.uploading.as_mut() {
+            *frames += 1;
+            if s.progress().is_none() {
+                tracing::info!(ms = since.elapsed().as_millis() as u64, frames = *frames, "map textures uploaded");
+                self.uploading = None;
+            }
+        }
     }
 
     /// Sets the outdoor backdrop for this map. Call after `set_scene` and before
@@ -1380,6 +1405,8 @@ impl Renderer {
     }
 
     pub fn frame(&mut self) -> anyhow::Result<()> {
+        // A new map's textures, a few milliseconds' worth a frame.
+        self.pump_uploads(Some(UPLOAD_BUDGET));
         let tex = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -1418,6 +1445,8 @@ impl Renderer {
 
     /// As `capture`, with or without the UI drawn over the world.
     pub fn capture_with(&mut self, width: u32, height: u32, ui: bool) -> anyhow::Result<Rgba> {
+        // One frame: the whole map, not the part of its textures up so far.
+        self.finish_uploads();
         let mut config = self.config.clone();
         config.width = width;
         config.height = height;
@@ -1794,6 +1823,8 @@ impl Renderer {
                     pass.set_pipeline(&self.scene_pipeline);
                     pass.set_vertex_buffer(0, t.vertices.slice(..));
                     for (range, tex) in t.ranges.iter().zip(&t.textures) {
+                        // (A texture still going up: its pieces wait; see Scene::pump.)
+                        let Some(tex) = tex else { continue };
                         if !range.is_empty() {
                             pass.set_bind_group(1, tex, &[]);
                             pass.draw(range.clone(), 0..1);
@@ -2092,6 +2123,10 @@ fn globals_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, glo
         ],
     })
 }
+
+/// How long a frame spends uploading a new map's textures (Scene::pump): the loading screen
+/// keeps moving, at about 50 fps or better, while a map's hundreds of megabytes go up.
+const UPLOAD_BUDGET: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// A map's textures and ray tracing geometry readied for `Renderer::set_prepared_scene`.
 pub struct PreparedScene {
