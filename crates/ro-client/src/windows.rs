@@ -930,6 +930,7 @@ impl Windows {
                                 ("Battle & Castles", "battle"),
                                 ("Achievements   Alt+Y", "y"),
                                 ("Combat Log   Alt+D", "d"),
+                                ("MVP Timers", "mvp"),
                                 ("Attendance   Alt+J", "j"),
                             ] {
                                 if ui.selectable_label(false, label).clicked() {

@@ -64,6 +64,8 @@ pub struct Settings {
     pub quest_tracker: bool,
     /// Quests pinned to the tracker, by character name.
     pub tracked_quests: std::collections::BTreeMap<String, Vec<u32>>,
+    /// Bosses seen dying, for the MVP timers (mvptimers.rs).
+    pub mvp_deaths: Vec<crate::mvptimers::Death>,
     /// While aiming a skill, a ring on the ground around us shows how far it reaches.
     pub skill_range: bool,
     /// Frame rate cap while another window has focus (0: none). Minimised, nothing is drawn.
@@ -108,7 +110,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, background_fps: 30, chat_timestamps: false, chat_log: false, monster_info: true, target_frame: true, quest_tracker: true, tracked_quests: Default::default(), skill_range: true, hud_layout: Default::default(), keys: Default::default(), screen_shake: true, arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
+        Self { bgm_volume: 0.5, sfx_volume: 0.7, ui_scale: 1.0, minimap: true, perf_overlay: false, background_fps: 30, chat_timestamps: false, chat_log: false, monster_info: true, target_frame: true, quest_tracker: true, tracked_quests: Default::default(), mvp_deaths: vec![], skill_range: true, hud_layout: Default::default(), keys: Default::default(), screen_shake: true, arrange: false, open_keys: false, menu_collapsed: false, classic_ui: true, last_id: String::new(), visual: Visual::default(), upscale: ro_render::UpscaleSettings::default(), bgm_off: false, sfx_off: false, effects_off: false, aura_off: false, aura_simple: false, battle_mode: false, battle_keys: crate::windows::BATTLE_KEYS.iter().map(|k| k.to_string()).collect(), battle_space_chat: true, hotkey_rows: 1, macros: crate::emotes::DEFAULT_MACROS.iter().map(|m| m.to_string()).collect(), screenshot_ui: true, fullscreen: false, exp_messages: false, pad_style: Default::default(), vibration: 1.0, touchpad: true, light_bar: true, dualsense_hd: true, vibration_test: false, pad_tuning: Default::default(), pad_live: None }
     }
 }
 
