@@ -4,6 +4,7 @@ mod audio;
 mod chatlog;
 mod skillarea;
 mod skillarea_db;
+mod surface;
 mod weather;
 mod book;
 mod captcha;
@@ -291,6 +292,8 @@ struct LoadedMap {
     water: Option<(ro_render::WaterMesh, Vec<Option<ro_render::Rgba>>)>,
     /// Ambient effect emitters (EF_* id, world position): torches, bubbles, fireflies.
     effects: Vec<(i32, glam::Vec3, f32, [f32; 4])>,
+    /// What the ground is made of, cell by cell (footprints, dust).
+    surface: surface::SurfaceMap,
 }
 
 /// `up` upscales ground, water and model textures (never sprites, which load elsewhere).
@@ -452,7 +455,7 @@ fn load_map(vfs: &ro_vfs::Vfs, name: &str, up: &ro_render::Upscaler, rt_layers: 
         })
         .collect();
     let effects = rsw.effects.iter().map(|e| (e.id, glam::Vec3::new(e.pos[0] + gnd.width as f32 * gnd.zoom / 2.0, -e.pos[1], e.pos[2] + gnd.height as f32 * gnd.zoom / 2.0), e.delay, e.params)).collect();
-    Ok(LoadedMap { mesh, scene, water, lighting: ro_render::Lighting::from_rsw(&rsw.light), lights, effects })
+    Ok(LoadedMap { mesh, scene, water, lighting: ro_render::Lighting::from_rsw(&rsw.light), lights, effects, surface: surface::SurfaceMap::new(&gnd) })
 }
 
 fn default_ui_scale() -> f32 {
@@ -571,6 +574,8 @@ struct World {
     submerged: bool,
     /// Its sky profile's climate ("snow", "forest"...), for ambient weather; None indoors.
     climate: Option<&'static str>,
+    /// What the ground is made of (footprints, dust).
+    surface: surface::SurfaceMap,
 }
 
 /// Cells around a room's floor still drawn, so its walls and furniture show.
@@ -1439,6 +1444,10 @@ struct App {
     map_load: Option<MapLoad>,
     /// Snow, rain, petals... (the server's, and ambient by climate).
     weather: weather::Weather,
+    /// Each walking unit's last cell, for its footsteps (prints and dust), and a step count
+    /// (which foot, and a seed).
+    steps: std::collections::HashMap<u32, (i32, i32)>,
+    step_count: u32,
     /// A map the loader finished (its files' name), for enter_map to use.
     preloaded: Option<(String, anyhow::Result<LoadedMap>)>,
     /// The window has keyboard focus (off: Settings' background frame rate applies).
@@ -1573,7 +1582,7 @@ impl App {
                 if self.net.is_some() {
                     r.night = self.server_night || map_night(server_name);
                 }
-                self.world = Some(World { name: server_name.to_string(), outdoors, ground: map.mesh, gat, room: None, submerged, climate });
+                self.world = Some(World { name: server_name.to_string(), outdoors, ground: map.mesh, gat, room: None, submerged, climate, surface: map.surface });
                 self.ready_at = Some(std::time::Instant::now());
                 // The part of a map load that stays on the frame loop (GPU uploads, effects).
                 tracing::info!(map = name, ms = applying.elapsed().as_millis() as u64, "map applied");

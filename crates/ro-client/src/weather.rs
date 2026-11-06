@@ -239,7 +239,7 @@ impl Weather {
             return (vec![], bangs);
         }
         // Back from a long pause (a minimised window): no pile of rockets at once.
-        self.next_launch_ms = (self.next_launch_ms - dt_ms).max(-500.0);
+        self.next_launch_ms = (self.next_launch_ms - dt_ms).max(-100.0);
         let mut launches = vec![];
         while self.next_launch_ms <= 0.0 {
             let launch = Launch { across: self.roll() * 2.0 - 1.0, depth: self.roll() * 2.0 - 1.0, rise: 9.0 + self.roll() * 5.0, colour: self.roll(), seed: self.dice };
@@ -294,6 +294,11 @@ impl Weather {
 }
 
 impl Weather {
+    /// How hard it rains as shown now (0..1).
+    pub fn raining(&self) -> f32 {
+        self.shown.get(&WeatherKind::Rain).copied().unwrap_or(0.0)
+    }
+
     /// Fireflies over `dt_ms`: on green maps (forests, fields, coasts, highlands, blossom)
     /// once night has fallen (`night` 0..1), unless it rains: a swarm every few seconds,
     /// somewhere within view. Where to set one loose (cells from the focus), if now.
