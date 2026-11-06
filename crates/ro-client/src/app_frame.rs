@@ -1903,6 +1903,21 @@ impl App {
                 if let Some((quest, active)) = self.quests.show(ui.ctx(), &|m| navi_names.map_name(m).map(str::to_string)) {
                     self.queued_commands.push(ro_net::Command::QuestActive { quest, active });
                 }
+                if self.settings.quest_tracker && self.photo.is_none() {
+                    // (Map names for "report back in ...".)
+                    if !self.quests.tracked.is_empty() {
+                        self.navi.ensure_loaded(self.vfs.as_deref());
+                    }
+                    let navi_names = &self.navi;
+                    if let Some(id) = self.quests.tracker(ui.ctx(), &|m| navi_names.map_name(m).map(str::to_string)) {
+                        self.quests.open_at(id);
+                    }
+                }
+                // Pins changed (accepted, the Track box, quests gone): kept per character.
+                if std::mem::take(&mut self.quests.tracked_changed) && !self.hud.status.name.is_empty() {
+                    self.settings.tracked_quests.insert(self.hud.status.name.clone(), self.quests.tracked.clone());
+                    self.settings.save();
+                }
                 if let Some((map, cell, label)) = self.quests.navigate.take() {
                     self.navi.ensure_loaded(self.vfs.as_deref());
                     self.navi.go(&map, cell, label);

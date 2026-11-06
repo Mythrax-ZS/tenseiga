@@ -219,13 +219,26 @@ impl App {
                 let msg = if ok { format!("You made {name}.") } else { format!("Making {name} failed.") };
                 self.hud.push_chat(ro_net::ChatKind::System, msg);
             }
-            Quests(list) => self.quests.quests = list.into_iter().map(|q| (q.id, q)).collect(),
+            Quests(list) => {
+                tracing::debug!(quests = list.len(), "quest list");
+                // The character's saved pins join any made since (the server sends the list
+                // again after a quest is taken), then those of quests it no longer has go.
+                let saved = self.settings.tracked_quests.get(&self.hud.status.name).cloned().unwrap_or_default();
+                for id in saved {
+                    if !self.quests.tracked.contains(&id) {
+                        self.quests.tracked.push(id);
+                    }
+                }
+                self.quests.listed(list);
+            }
             QuestAdded(q) => {
+                tracing::debug!(quest = q.id, objectives = q.objectives.len(), "quest added");
                 self.hud.push_chat(ro_net::ChatKind::System, format!("Quest accepted: {}", self.quests.title(q.id)));
-                self.quests.quests.insert(q.id, q);
+                self.quests.accepted(q);
             }
             QuestRemoved(id) => {
                 self.quests.quests.remove(&id);
+                self.quests.set_tracked(id, false);
             }
             QuestProgress(updates) => self.quests.progress(&updates),
             QuestActiveChanged { quest, active } => {
