@@ -1095,6 +1095,12 @@ impl App {
                         a.play(vfs, "effect\\itempokjuk.wav");
                     }
                 }
+                // Thunderstorms: lightning lights the map, the thunder comes after.
+                let (flash, claps) = self.weather.storm(dt);
+                r.lightning = flash;
+                if let (true, Some(a)) = (claps > 0 && r.show_effects && w.outdoors, self.audio.as_ref()) {
+                    a.play(vfs, "effect\\ef_thunderstorm.wav");
+                }
             }
             // Ambient map effects (RSW emitters, EF_* ids): torches loop in place; bubbles and
             // fireflies fire again on each emitter's own timer while the player is near.

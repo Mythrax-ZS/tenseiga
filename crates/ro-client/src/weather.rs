@@ -116,6 +116,12 @@ pub struct Weather {
     next_launch_ms: f32,
     bangs: Vec<f32>,
     dice: u32,
+    /// Thunderstorms: until the next strike (ms), how long since the last (ms; its flash
+    /// flickers out within a second), and the thunder still to come (ms until each).
+    next_strike_ms: f32,
+    since_strike_ms: Option<f32>,
+    flicker: [f32; 3],
+    thunder: Vec<f32>,
     /// Each kind's strength as shown, eased toward what is wanted.
     shown: HashMap<WeatherKind, f32>,
     /// Each kind's texture once loaded (and how many pictures it holds side by side).
@@ -241,6 +247,54 @@ impl Weather {
         }
         (launches, bangs)
     }
+}
+
+impl Weather {
+    /// A thunderstorm over `dt_ms`: heavy rain (shown at 0.6 or more, past its easing in)
+    /// brings a strike every 12 to 45 seconds. The flash's brightness now (0 none .. about
+    /// 1, two or three quick flickers), and how many thunderclaps sound now (each 0.4 to 2.5
+    /// seconds after its flash, as far off as that).
+    pub fn storm(&mut self, dt_ms: f32) -> (f32, u32) {
+        for t in &mut self.thunder {
+            *t -= dt_ms;
+        }
+        let claps = self.thunder.iter().filter(|t| **t <= 0.0).count() as u32;
+        self.thunder.retain(|t| *t > 0.0);
+        let rain = self.shown.get(&WeatherKind::Rain).copied().unwrap_or(0.0);
+        if rain < 0.6 {
+            // Not storming: the first strike comes a little while after it gets heavy.
+            self.next_strike_ms = 6000.0 + self.roll() * 10000.0;
+        } else {
+            self.next_strike_ms -= dt_ms;
+            if self.next_strike_ms <= 0.0 {
+                self.since_strike_ms = Some(0.0);
+                let (second, third) = (0.25 + self.roll() * 0.5, self.roll() * 0.9);
+                self.flicker = [1.0, second, third];
+                let far = 400.0 + self.roll() * 2100.0;
+                self.thunder.push(far);
+                self.next_strike_ms = 12_000.0 + self.roll() * 33_000.0;
+                tracing::debug!("lightning");
+            }
+        }
+        let flash = match self.since_strike_ms.as_mut() {
+            Some(t) => {
+                let at = *t;
+                *t += dt_ms;
+                if at > 1000.0 {
+                    self.since_strike_ms = None;
+                }
+                flash_at(at, self.flicker)
+            }
+            None => 0.0,
+        };
+        (flash, claps)
+    }
+}
+
+/// A lightning flash `ms` after the strike: flickers at 0, 90 and 230 ms of the given
+/// strengths, each dying away in about a tenth of a second.
+fn flash_at(ms: f32, flicker: [f32; 3]) -> f32 {
+    [0.0, 90.0, 230.0].iter().zip(flicker).map(|(at, k)| if ms >= *at { k * (-(ms - at) / 70.0).exp() } else { 0.0 }).sum()
 }
 
 /// One firework going up: where across the screen (-1..1) and how far into it (-1..1, from
@@ -450,6 +504,32 @@ mod tests {
         assert!(w.server.is_empty());
         // Chat that merely says so (with a speaker) is no message from the server.
         assert_eq!(stopped("Hayate : Snow has stopped falling."), None);
+    }
+
+    #[test]
+    fn heavy_rain_brings_lightning_and_thunder_after_it() {
+        let mut w = Weather::default();
+        // Light rain: no storm.
+        w.shown.insert(WeatherKind::Rain, 0.4);
+        assert!((0..2000).all(|_| w.storm(16.0) == (0.0, 0)));
+        // Heavy: strikes within the first minute, each flash then its thunder.
+        w.shown.insert(WeatherKind::Rain, 1.0);
+        let (mut flashes, mut claps, mut bright) = (0, 0, 0.0f32);
+        let mut lit = false;
+        for _ in 0..(120_000 / 16) {
+            let (f, c) = w.storm(16.0);
+            if f > 0.0 && !lit {
+                flashes += 1;
+            }
+            lit = f > 0.0;
+            bright = bright.max(f);
+            claps += c;
+        }
+        assert!((3..=10).contains(&flashes), "{flashes} strikes in two minutes");
+        assert!(claps + 1 >= flashes && claps <= flashes, "{claps} claps for {flashes}");
+        assert!(bright > 0.9 && bright < 2.5);
+        // The flash is gone within a second.
+        assert!(flash_at(1000.0, [1.0, 0.8, 0.9]) < 0.01);
     }
 
     #[test]
