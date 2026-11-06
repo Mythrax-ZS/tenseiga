@@ -199,7 +199,8 @@ pub fn window_mask(img: &Rgba) -> Option<Rgba> {
             }
         }
     }
-    let mut windows: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    // (In a fixed order, so the same windows are lit every time.)
+    let mut windows: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
     for (i, &id) in ids.iter().enumerate() {
         let g = root(&mut group, i);
         windows.entry(g).or_default().push(id);
