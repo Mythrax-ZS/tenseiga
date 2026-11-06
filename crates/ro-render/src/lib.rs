@@ -1058,6 +1058,11 @@ impl Renderer {
         self.sheets.get(sheet.0).is_some_and(|s| s.has_layers(group * 8))
     }
 
+    /// How many frames an actor action has, and how long each shows (ms); (0, 0) if none.
+    pub fn action_frames(&self, sheet: SheetId, action: usize) -> (usize, f32) {
+        self.sheets.get(sheet.0).map_or((0, 0.0), |s| s.action_frames(action))
+    }
+
     /// How long one pass of an actor action takes (sprite effects play it once).
     pub fn action_ms(&self, sheet: SheetId, action: usize) -> f32 {
         self.sheets.get(sheet.0).map_or(0.0, |s| s.action_ms(action))
