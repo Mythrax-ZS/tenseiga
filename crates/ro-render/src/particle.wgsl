@@ -56,12 +56,48 @@ fn in_room(world: vec3<f32>) -> bool {
     return textureLoad(room_mask, cell, 0).r > 0.5;
 }
 
+// The particle's texel, smoothly magnified. RO's particle textures are small (sparks are
+// single bright texels on black); drawn many screen pixels to a texel, bilinear filtering
+// spreads each into a soft square. A B-spline (bicubic) filter rounds them into soft dots,
+// as they read at the original's resolution. Minified, the usual mipmapped sample.
+fn particle_texel(uv: vec2<f32>) -> vec4<f32> {
+    let plain = textureSample(tex, samp, uv);
+    let size = vec2<f32>(textureDimensions(tex));
+    let texels = max(length(dpdx(uv * size)), length(dpdy(uv * size)));
+    let p = uv * size - 0.5;
+    let f = fract(p);
+    let i = p - f;
+    let wx = bspline(f.x);
+    let wy = bspline(f.y);
+    let c = vec4(i.x - 0.5, i.x + 1.5, i.y - 0.5, i.y + 1.5);
+    let s = vec4(wx.x + wx.y, wx.z + wx.w, wy.x + wy.y, wy.z + wy.w);
+    let o = (c + vec4(wx.y, wx.w, wy.y, wy.w) / s) / vec4(size.x, size.x, size.y, size.y);
+    let a = textureSampleLevel(tex, samp, vec2(o.x, o.z), 0.0);
+    let b = textureSampleLevel(tex, samp, vec2(o.y, o.z), 0.0);
+    let cc = textureSampleLevel(tex, samp, vec2(o.x, o.w), 0.0);
+    let d = textureSampleLevel(tex, samp, vec2(o.y, o.w), 0.0);
+    let sx = s.x / (s.x + s.y);
+    let sy = s.z / (s.z + s.w);
+    let soft = mix(mix(d, cc, sx), mix(b, a, sx), sy);
+    return mix(plain, soft, 1.0 - smoothstep(0.7, 1.2, texels));
+}
+
+// Cubic B-spline weights for the four texels around `f` (0..1 between the middle two).
+fn bspline(f: f32) -> vec4<f32> {
+    let n = vec4(1.0, 2.0, 3.0, 4.0) - f;
+    let s = n * n * n;
+    let x = s.x;
+    let y = s.y - 4.0 * s.x;
+    let z = s.z - 4.0 * s.y + 6.0 * s.x;
+    return vec4(x, y, z, 6.0 - x - y - z) / 6.0;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if !in_room(in.world) {
         discard;
     }
-    let t = textureSample(tex, samp, in.uv);
+    let t = particle_texel(in.uv);
     return vec4(srgb_to_linear(t.rgb * in.color.rgb), t.a * in.color.a);
 }
 
@@ -73,6 +109,6 @@ fn fs_add(in: VsOut) -> @location(0) vec4<f32> {
     if !in_room(in.world) {
         discard;
     }
-    let t = textureSample(tex, samp, in.uv);
+    let t = particle_texel(in.uv);
     return vec4(t.rgb * in.color.rgb, t.a * in.color.a);
 }
