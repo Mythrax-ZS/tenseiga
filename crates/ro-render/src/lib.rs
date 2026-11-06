@@ -15,6 +15,7 @@ mod sprite;
 mod upscale;
 mod water;
 mod weather;
+mod windows;
 
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ pub use scene::{rsm_at, SceneBuilder, SceneMesh, Vertex as ModelVertex};
 pub use upscale::{is_sprite_path, AssetClass, Quality as UpscaleQuality, UpscaleSettings, Upscaler};
 pub use water::{flag as water_flag, Foam, WaterMesh, WaterQuality, WaterSettings};
 pub use weather::{WeatherKind, WeatherLayer};
+pub use windows::window_mask;
 pub use effect::{AuraLayer, AuraStyle, FireworkPart, ProcFx, Shape, TenseigaPart, TexId, FIREWORK_BURST_MS, FIREWORK_MS};
 pub use particle::{Emitter, EmitterDef, Glow, Waterfall, Wind};
 pub use fx::{Fx, FxId};
@@ -492,6 +494,17 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // The texture's windows (windows.rs): red glass, green a number per window.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let lightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -826,6 +839,7 @@ impl Renderer {
             &self.lightmap_sampler,
             mesh,
             prepared.textures,
+            prepared.windows,
         ));
         self.lighting = lighting;
         self.water = None;
@@ -1008,6 +1022,7 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.repeat_sampler) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.model_lightmap) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.lightmap_sampler) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.model_lightmap) },
             ],
         }));
         ModelTexId(self.model_textures.len() - 1)
@@ -2082,6 +2097,8 @@ fn globals_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, glo
 pub struct PreparedScene {
     /// Each texture's mip chain (a missing one is a magenta pixel).
     textures: Vec<Vec<Rgba>>,
+    /// Each texture's window mask's mip chain, if it has windows (windows.rs).
+    windows: Vec<Option<Vec<Rgba>>>,
     rt: Option<rt::Geometry>,
 }
 
@@ -2097,7 +2114,9 @@ pub fn prepare_scene_counted(mesh: &SceneMesh, images: Vec<Option<Rgba>>, rt_lay
         let refs: Vec<Option<&Rgba>> = images.iter().map(Option::as_ref).collect();
         rt::split(&mesh.vertices, &mesh.ranges, &refs, max)
     });
-    PreparedScene { textures: mip_chains(images, each), rt }
+    // Windows on the models' textures (the ground has none).
+    let windows = images.iter().enumerate().map(|(i, img)| img.as_ref().filter(|_| i >= mesh.ground_textures).and_then(window_mask).map(|m| scene::mip_chain(m, true))).collect::<Vec<_>>();
+    PreparedScene { textures: mip_chains(images, each), windows, rt }
 }
 
 /// Each texture's mip chain; a missing texture is a magenta pixel.

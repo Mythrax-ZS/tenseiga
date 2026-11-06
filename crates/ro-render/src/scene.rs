@@ -16,7 +16,35 @@ pub struct Vertex {
     pub lightmap_uv: [f32; 2],
     pub color: [f32; 3],
     /// How far this vertex sways in the wind at most (world units; 0 for all but foliage).
+    /// The ground (GND surfaces) carries `GROUND` instead, which the shaders read as "this
+    /// is ground, not a model" (wet ground, puddles, lit windows).
     pub sway: f32,
+}
+
+/// `Vertex::sway` on the ground: it doesn't sway, and marks the ground for the shaders.
+pub const GROUND: f32 = -1.0;
+/// `Vertex::sway` on a small prop (no lit windows): see `PROP_SPAN`.
+pub const PROP: f32 = -2.0;
+/// Models narrower than this across (world units, both ways) are props, not buildings.
+const PROP_SPAN: f32 = 14.0;
+/// Triangles thinner than this (world units) are poles, posts and trim, never windows.
+const THIN: f32 = 1.5;
+
+/// A triangle's least height (twice its area over its longest side): small for a sliver of
+/// a pole however long it is, large for a pane of a window.
+fn thinness(tri: &[Vertex; 3]) -> f32 {
+    let [a, b, c] = tri.map(|v| Vec3::from(v.pos));
+    let longest = (b - a).length().max((c - b).length()).max((a - c).length());
+    (b - a).cross(c - a).length() / longest.max(1e-4)
+}
+
+/// Models whose names say they're cloth, signs or lamps (휘장 banner, 깃발 flag, 가로등
+/// street lamp, 간판 sign, 천막 tent, 현수막 hanging banner, 장막 curtain, 파라솔 parasol,
+/// 수레 cart, 동상 statue, 가판대 stall): never lit windows, whatever their colours.
+pub fn no_windows(file: &str) -> bool {
+    const WORDS: [&str; 12] = ["휘장", "깃발", "가로등", "간판", "천막", "현수막", "장막", "파라솔", "수레", "동상", "가판", "flag"];
+    let name = file.rsplit(['\\', '/']).next().unwrap_or(file).to_lowercase();
+    WORDS.iter().any(|w| name.contains(w))
 }
 
 impl Vertex {
@@ -308,7 +336,7 @@ impl<'a> SceneBuilder<'a> {
             _ => self.atlas.uvs(Some(s.lightmap)),
         };
         let color = [s.color[2] as f32 / 255.0, s.color[1] as f32 / 255.0, s.color[0] as f32 / 255.0];
-        let v = |i: usize| Vertex { pos: p[i].into(), normal: normals[i].into(), uv: [s.u[i], s.v[i]], lightmap_uv: lm[i], color: colors.map_or(color, |c| c[i]), sway: 0.0 };
+        let v = |i: usize| Vertex { pos: p[i].into(), normal: normals[i].into(), uv: [s.u[i], s.v[i]], lightmap_uv: lm[i], color: colors.map_or(color, |c| c[i]), sway: GROUND };
         self.per_tex[t].extend([v(0), v(1), v(3), v(0), v(3), v(2)]);
     }
 
@@ -327,11 +355,25 @@ impl<'a> SceneBuilder<'a> {
         let white = self.atlas.white();
         let tex: Vec<usize> = rsm.textures.iter().map(|t| self.texture(t)).collect();
         let Some(bend) = foliage(&inst.file) else {
-            model_triangles(rsm, world, white, |t, tri| {
+            let mut tris = vec![];
+            model_triangles(rsm, world, white, |t, tri| tris.push((t, tri)));
+            // Lit windows only on buildings: banners, flags, lamp posts, signs, tents and
+            // anything small are marked so the shader leaves them dark (blue cloth and paint
+            // can look just like glass).
+            let (lo, hi) = tris.iter().flat_map(|(_, tri)| tri.iter().map(|v| Vec3::from(v.pos))).fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
+            let span = (hi - lo).max(Vec3::ZERO);
+            let prop = span.x.max(span.z) < PROP_SPAN || no_windows(&inst.file);
+            for (t, mut tri) in tris {
+                // Thin pieces (poles, posts, railings, a spire) are never a window either.
+                if prop || thinness(&tri) < THIN {
+                    for v in &mut tri {
+                        v.sway = PROP;
+                    }
+                }
                 if let Some(&t) = tex.get(t) {
                     self.per_tex[t].extend(tri);
                 }
-            });
+            }
             return;
         };
         // Foliage sways in the wind: rooted at its foot, swaying more the higher up it is
@@ -632,6 +674,7 @@ impl Scene {
         lightmap_sampler: &wgpu::Sampler,
         mesh: &SceneMesh,
         textures: Vec<Vec<Rgba>>,
+        windows: Vec<Option<Vec<Rgba>>>,
     ) -> Self {
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("scene"),
@@ -639,10 +682,14 @@ impl Scene {
             usage: wgpu::BufferUsages::VERTEX,
         });
         let lightmap = upload_texture(device, queue, &mesh.lightmap, false);
+        // Textures without windows share one dark pixel.
+        let no_windows = upload_texture(device, queue, &Rgba { width: 1, height: 1, pixels: vec![0, 0, 0, 255] }, false);
+        let mut windows = windows.into_iter();
         let textures = textures
             .into_iter()
             .map(|levels| {
                 let view = upload_levels(device, queue, &levels);
+                let window_view = windows.next().flatten().map(|levels| upload_levels(device, queue, &levels));
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("scene texture"),
                     layout,
@@ -651,6 +698,7 @@ impl Scene {
                         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
                         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&lightmap) },
                         wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(lightmap_sampler) },
+                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(window_view.as_ref().unwrap_or(&no_windows)) },
                     ],
                 })
             })
@@ -714,5 +762,15 @@ mod foliage_tests {
         }
         // Grass bends further (for its height) than a tree.
         assert!(foliage("bifrost\\풀01.rsm") > foliage("나무잡초꽃\\나무01.rsm"));
+    }
+
+    #[test]
+    fn banners_and_lamps_never_light_windows() {
+        for f in ["프론테라\\휘장가로등.rsm", "프론테라\\휘장.rsm", "외부소품\\가로등01.rsm", "페이욘\\주점간판.rsm", "크리스마스마을\\xmas_파라솔.rsm", "외부소품\\수레01.rsm"] {
+            assert!(super::no_windows(f), "{f} stays dark");
+        }
+        for f in ["프론테라\\민가04.rsm", "프론테라\\상점03.rsm", "프론테라\\창고.rsm", "페이욘\\궁2.rsm"] {
+            assert!(!super::no_windows(f), "{f} may light up");
+        }
     }
 }

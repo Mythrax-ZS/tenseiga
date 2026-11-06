@@ -54,6 +54,8 @@ struct Globals {
 @group(1) @binding(1) var samp: sampler;
 @group(1) @binding(2) var lightmap: texture_2d<f32>;
 @group(1) @binding(3) var lightmap_samp: sampler;
+// Where the texture's windows are (windows.rs): red glass, green a number per window.
+@group(1) @binding(4) var window_tex: texture_2d<f32>;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -72,6 +74,9 @@ struct VsOut {
     @location(2) lightmap_uv: vec2<f32>,
     @location(3) color: vec3<f32>,
     @location(4) world: vec3<f32>,
+    // x: 1 on the ground, 0 on models; y: 1 on props that never light windows. (Carried in
+    // the vertex's sway: GROUND -1 on the ground, PROP -2 on props.)
+    @location(5) @interpolate(flat) kind: vec2<f32>,
 };
 
 @vertex
@@ -84,6 +89,7 @@ fn vs_main(v: VsIn) -> VsOut {
     o.lightmap_uv = v.lightmap_uv;
     o.color = v.color;
     o.world = pos;
+    o.kind = vec2(select(0.0, 1.0, v.sway < -0.5 && v.sway > -1.5), select(0.0, 1.0, v.sway < -1.5));
     return o;
 }
 
@@ -136,8 +142,9 @@ fn fs_main(in: VsOut) -> FsOut {
     let ddy = dpdy(in.uv);
     let dwx = dpdx(in.world);
     let dwy = dpdy(in.world);
-    // The ground's lightmap coordinates run across it; every model's are one white texel.
-    let ground = select(0.0, 1.0, any(fwidth(in.lightmap_uv) > vec2(0.0)));
+    // (Told apart by the vertices, not by whether the lightmap coordinates change from pixel
+    // to pixel: interpolation noise made that flicker, lighting specks on banners at night.)
+    let ground = in.kind.x;
     var t: vec4<f32>;
     let size = vec2<f32>(textureDimensions(tex));
     let footprint = max(dot(ddx * size, ddx * size), dot(ddy * size, ddy * size));
@@ -167,7 +174,7 @@ fn fs_main(in: VsOut) -> FsOut {
     let pl = point_light(in.world, n);
     // The torch light baked into the lightmap wavers with the flame.
     let lit = (srgb_to_linear(rgb) * sprite_shadow(in.world, sun_ray(in.world, flat, 4u)) * (1.0 + pl.w) + srgb_to_linear(t.rgb * in.color) * pl.rgb) * torch_shadows(in.world);
-    let glow = window_glow(t.rgb, in.world, flat, ground);
+    let glow = window_glow(in.uv, ddx, ddy, flat, max(ground, in.kind.y));
     return FsOut(vec4(wet_surface(lit, in.world, flat, ground) + glow, 1.0), vec4(distance(in.world, g.eye.xyz), 0.0, 0.0, 0.0));
 }
 
@@ -401,28 +408,27 @@ fn sway(p: vec3<f32>, reach: f32) -> vec3<f32> {
     return (dir * bend + side * flutter * 0.6 + vec3(0.0, flutter * 0.3 - bend * bend * 0.15, 0.0)) * k;
 }
 
-// Lit windows at night: on the walls of buildings (models, facing sideways), texels that
-// read as glass (dark, and bluer than they are red or green) glow warm, as if lamps burned
-// inside. Not every window: each 8-unit patch of wall is lit or dark by a hash, and the lit
-// ones flicker very gently, like lamplight.
-fn window_glow(tex: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
+// Windows lit from within at night (models only, upright faces, not props or thin
+// pieces). Where the glass is was found when the texture loaded, by its shape (windows.rs):
+// the mask's red is the glass, its green a number per window, so a whole window is lit or
+// dark together, and each lit one flickers a little, like lamplight.
+fn window_glow(uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>, n: vec3<f32>, ground: f32) -> vec3<f32> {
     let k = g.night.x;
-    if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.35 {
+    if k <= 0.0 || ground > 0.5 || abs(n.y) > 0.3 {
         return vec3(0.0);
     }
-    let lum = dot(tex, vec3(0.299, 0.587, 0.114));
-    let blue = tex.b - max(tex.r, tex.g);
-    let glass = smoothstep(0.015, 0.08, blue) * (1.0 - smoothstep(0.25, 0.45, lum));
-    if glass <= 0.0 {
+    let m = textureSampleGrad(window_tex, samp, uv, ddx, ddy);
+    if m.r <= 0.02 {
         return vec3(0.0);
     }
-    let pane = floor(world / 8.0);
-    let h = cloud_hash(pane.xz + vec2(pane.y * 7.0, pane.y * 13.0));
-    if h > 0.6 {
+    // The window's own number, undone from the glass's share at its edge.
+    let id = m.g / max(m.r, 1e-3);
+    let h = fract(id * 255.0 * 0.6180339);
+    if h > 0.65 {
         return vec3(0.0);
     }
     let flicker = 0.92 + 0.08 * sin(g.params.x * (2.0 + h * 3.0) + h * 40.0);
-    return vec3(1.0, 0.62, 0.28) * glass * k * flicker * (2.4 + 2.0 * h);
+    return vec3(1.0, 0.62, 0.28) * m.r * k * flicker * (2.0 + 1.6 * h);
 }
 
 // RT-STUB: replaced by rt.wgsl where the GPU traces rays.
