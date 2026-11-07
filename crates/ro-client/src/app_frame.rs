@@ -725,6 +725,14 @@ impl App {
                         }
                         None
                     }
+                    // selfcast:id uses a skill on ourselves (a buff).
+                    Some(("selfcast", id)) => {
+                        if let Ok(skill) = id.parse::<u16>() {
+                            let level = self.skills.iter().find(|s| s.id == skill).map_or(1, |s| s.level.max(1));
+                            self.use_skill_on(skill, level, self.account_id);
+                        }
+                        None
+                    }
                     Some(("party", name)) => {
                         self.send(ro_net::Command::Party(ro_net::PartyRequest::Create { name: name.into() }));
                         None
