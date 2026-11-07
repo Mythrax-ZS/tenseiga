@@ -28,7 +28,7 @@ pub use upscale::{is_sprite_path, AssetClass, Quality as UpscaleQuality, Upscale
 pub use water::{flag as water_flag, Foam, WaterMesh, WaterQuality, WaterSettings};
 pub use weather::{WeatherKind, WeatherLayer};
 pub use windows::window_mask;
-pub use effect::{AuraLayer, AuraStyle, FireworkPart, ProcFx, Shape, TenseigaPart, TexId, FIREWORK_BURST_MS, FIREWORK_MS};
+pub use effect::{AuraLayer, AuraStyle, FireworkPart, Grow, Horns, ProcFx, Shape, TenseigaPart, TexId, FIREWORK_BURST_MS, FIREWORK_MS};
 pub use particle::{Emitter, EmitterDef, Glow, Waterfall, Wind};
 pub use fx::{Fx, FxId};
 pub use post::PostSettings;
@@ -302,6 +302,8 @@ pub struct Renderer {
     effect_pipeline: wgpu::RenderPipeline,
     /// The same geometry alpha-blended (effects that darken, see `ProcFx::shades`).
     shade_pipeline: wgpu::RenderPipeline,
+    /// Code-drawn effects alpha-blended in their texture's own colours (`effect::Blend::Solid`).
+    solid_pipeline: wgpu::RenderPipeline,
     started: std::time::Instant,
     /// Photo mode: time stands still from this moment (and all the time it stood still
     /// before, which the clock leaves out).
@@ -664,6 +666,13 @@ impl Renderer {
             &[Some(effect::Vertex::layout())],
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
         );
+        let solid_pipeline = pipeline(
+            "effect solid",
+            &include_str!("effect.wgsl").replace("const SOLID: bool = false;", "const SOLID: bool = true;"),
+            &[Some(&globals_layout), Some(&sprite_layout)],
+            &[Some(effect::Vertex::layout())],
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        );
         let sprite_pipeline = pipeline(
             "sprite",
             &with_rt(include_str!("sprite.wgsl"), 2),
@@ -801,6 +810,7 @@ impl Renderer {
             show_effects: true,
             effect_pipeline,
             shade_pipeline,
+            solid_pipeline,
             started: std::time::Instant::now(),
             frozen_at: None,
             frozen_for: std::time::Duration::ZERO,
@@ -1001,7 +1011,7 @@ impl Renderer {
             }
             let start = vertices.len() as u32;
             p.vertices(self.camera.eye(), self.scene.as_ref().map(|_| &self.ground), &mut vertices);
-            draws.push((p.tex.0, p.shades(), start..vertices.len() as u32));
+            draws.push((p.tex.0, p.blend(), start..vertices.len() as u32));
         }
         if vertices.is_empty() {
             return;
@@ -1013,10 +1023,14 @@ impl Renderer {
         });
         pass.set_vertex_buffer(0, buffer.slice(..));
         let mut current = None;
-        for (tex, shades, range) in draws {
-            if current != Some(shades) {
-                pass.set_pipeline(if shades { &self.shade_pipeline } else { &self.effect_pipeline });
-                current = Some(shades);
+        for (tex, blend, range) in draws {
+            if current != Some(blend) {
+                pass.set_pipeline(match blend {
+                    effect::Blend::Add => &self.effect_pipeline,
+                    effect::Blend::Shade => &self.shade_pipeline,
+                    effect::Blend::Solid => &self.solid_pipeline,
+                });
+                current = Some(blend);
             }
             pass.set_bind_group(1, &self.effect_textures[tex], &[]);
             pass.draw(range, 0..1);

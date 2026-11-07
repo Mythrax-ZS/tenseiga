@@ -511,6 +511,9 @@ pub struct Cast {
     pub target: u32,
     pub cell: (u16, u16),
     pub skill: u16,
+    /// The spell's element (0 neutral, 1 water, 2 earth, 3 fire, 4 wind, 5 poison, 6 holy,
+    /// 7 shadow, 8 ghost, 9 undead), which colours the caster's aura.
+    pub element: u32,
     pub ms: u32,
 }
 
@@ -520,8 +523,8 @@ pub fn parse_cast(data: &[u8]) -> Cast {
     let target = b.get_u32_le();
     let cell = (b.get_u16_le(), b.get_u16_le());
     let skill = b.get_u16_le();
-    b.advance(4); // element
-    Cast { src, target, cell, skill, ms: b.get_u32_le() }
+    let element = b.get_u32_le();
+    Cast { src, target, cell, skill, element, ms: b.get_u32_le() }
 }
 
 /// ZC_ACK_TOUSESKILL (0x0110): the skill could not be used. (skill, cause)

@@ -725,14 +725,6 @@ impl App {
                         }
                         None
                     }
-                    // selfcast:id uses a skill on ourselves (a buff).
-                    Some(("selfcast", id)) => {
-                        if let Ok(skill) = id.parse::<u16>() {
-                            let level = self.skills.iter().find(|s| s.id == skill).map_or(1, |s| s.level.max(1));
-                            self.use_skill_on(skill, level, self.account_id);
-                        }
-                        None
-                    }
                     Some(("party", name)) => {
                         self.send(ro_net::Command::Party(ro_net::PartyRequest::Create { name: name.into() }));
                         None
@@ -1021,6 +1013,18 @@ impl App {
                         Some(p) => r.effects.iter_mut().filter(|e| e.tag == tag).for_each(|e| e.pos = p),
                         None => r.effects.retain(|e| e.tag != tag),
                     }
+                }
+            }
+        }
+        // Lock-on rings follow the targets of the casts they show.
+        let targets: Vec<(usize, u32)> = self.renderer.as_ref().map_or_else(Vec::new, |r| {
+            r.procs.iter().enumerate().filter_map(|(i, p)| if let ro_render::Shape::LockOn { target, .. } = p.shape { Some((i, target)) } else { None }).collect()
+        });
+        if !targets.is_empty() {
+            let placed: Vec<(usize, glam::Vec3)> = targets.into_iter().filter_map(|(i, t)| Some((i, self.unit_pos(t)?))).collect();
+            if let Some(r) = self.renderer.as_mut() {
+                for (i, pos) in placed {
+                    r.procs[i].pos = pos;
                 }
             }
         }

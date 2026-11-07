@@ -22,6 +22,13 @@ impl App {
                     r.effects.push(ro_render::Fx { asset, pos, time_ms: 0.0, looping: false, tag: 0 });
                 }
             }
+            Some(fx::Visual::OneOf(names)) => {
+                self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let name = names[(self.spark_seed >> 16) as usize % names.len()];
+                if let Some(asset) = self.fx.get(r, vfs, name) {
+                    r.effects.push(ro_render::Fx { asset, pos, time_ms: 0.0, looping: false, tag: 0 });
+                }
+            }
             Some(fx::Visual::Column(tex, color)) => {
                 if let Some(tex) = self.fx.texture(r, vfs, tex) {
                     let shape = ro_render::Shape::Column { radius: 0.9, height: 3.5 };
@@ -48,7 +55,7 @@ impl App {
                     self.sprite_fx.push((actor, ms));
                 }
             }
-            Some(fx::Visual::Code) => {}
+            Some(fx::Visual::Code) => self.wizard_fx(skill, pos),
             Some(fx::Visual::Tenseiga) => {
                 for &(part, texture, duration_ms, color) in fx::tenseiga_layers(skill) {
                     let Some(tex) = self.fx.fx_texture(r, vfs, texture) else { continue };
@@ -79,14 +86,126 @@ impl App {
         }
     }
 
-    /// Earth spikes erupting in a wave from `from` toward `to` (Grimtooth).
+    /// A skill's effect on a target it hit: its own effect for single-target skills, a small
+    /// hit for area skills (whose own effect played once, where they were cast).
+    pub(crate) fn skill_hit_fx(&mut self, skill: u16, pos: Option<glam::Vec3>) {
+        match fx::skill_hit(skill) {
+            fx::HitVisual::Own => self.skill_fx(skill, pos, true),
+            fx::HitVisual::Nothing => {}
+            fx::HitVisual::OneOf(names) => {
+                self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let name = names[(self.spark_seed >> 16) as usize % names.len()];
+                if let Some(pos) = pos {
+                    self.play_fx(name, pos);
+                }
+            }
+        }
+    }
+
+    /// The Wizard's effects the original client draws in code, at `pos` (the caster for Frost
+    /// Nova and Sightrasher, the target for Earth Spike, the cell for Heaven's Drive).
+    pub(crate) fn wizard_fx(&mut self, skill: u16, pos: glam::Vec3) {
+        match skill {
+            // Sightrasher: a ring of fire bursting out from the caster.
+            81 => {
+                self.proc_fx("fire_a.bmp", ro_render::Shape::Wave { radius: 3.5 }, pos, [1.0, 0.55, 0.25], 700.0);
+                self.play_fx("firehit2", pos);
+            }
+            // Frost Nova: shards of ice bursting out from the caster's feet (EF_FROSTDIVER2).
+            88 => self.horns_fx(ro_render::Horns::FrostNova, "ice.tga", pos, 700.0),
+            // Earth Spike: a spike of rock thrust up under the target (EF_EARTHSPIKE), its
+            // earth hit flashing there.
+            90 => {
+                self.horns_fx(ro_render::Horns::EarthSpike, "stone.bmp", pos, 3000.0);
+                self.play_fx("earthhit", pos);
+            }
+            // Heaven's Drive: rock thrust up over its five cells square (EF_HEAVENDRIVE).
+            91 => self.horns_fx(ro_render::Horns::HeavensDrive, "stone.bmp", pos, 2500.0),
+            _ => {}
+        }
+    }
+
+    /// Spikes thrust up out of the ground at `pos` (`ro_render::Shape::Horns`), lasting
+    /// `duration_ms`.
+    fn horns_fx(&mut self, kind: ro_render::Horns, tex: &'static str, pos: glam::Vec3, duration_ms: f32) {
+        self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let shape = ro_render::Shape::Horns { kind, seed: self.spark_seed };
+        self.proc_fx(tex, shape, pos, [1.0; 3], duration_ms);
+    }
+
+    /// What shows while a spell is being cast (as the original's ZC_USESKILL_ACK handling):
+    /// the caster's aura in the spell's element, and the lock-on ring under its target or the
+    /// magic circle where an area spell will fall.
+    pub(crate) fn cast_fx(&mut self, c: &ro_net::Cast) {
+        let ms = c.ms as f32;
+        if let Some(pos) = self.unit_pos(c.src) {
+            let (tex, color, spin, rings) = fx::cast_aura(c.element);
+            for &(top, height, grow, alpha) in rings {
+                let shape = ro_render::Shape::Cylinder { bottom: fx::AURA_BASE, top, height, grow, alpha, spin, owner: c.src };
+                self.proc_fx(tex, shape, pos, color, ms);
+            }
+        }
+        if c.target != 0 && c.target != c.src {
+            if let Some(pos) = self.unit_pos(c.target) {
+                let shape = ro_render::Shape::LockOn { target: c.target, owner: c.src };
+                self.proc_fx("lockon128.tga", shape, pos, [1.0; 3], ms);
+            }
+        } else if c.target == 0 {
+            if let Some(pos) = self.cell_pos(c.cell) {
+                let shape = ro_render::Shape::Rune { size: fx::cast_circle(c.skill), owner: c.src };
+                self.proc_fx("magic_target.tga", shape, pos, [1.0; 3], ms);
+            }
+        }
+    }
+
+    /// Jupitel Thunder: a ball of lightning flying from the caster to its target.
+    /// As the original draws it: the ball (EF_YUFITEL, effect\thunder_ball_a..f flickering
+    /// over thunder_center's glow) flies from the caster to its target in 0.2 s; then each of
+    /// its `hits` bursts there (EF_YUFITELHIT: a flash of thunder_pang and a flickering blast),
+    /// 0.2 s apart.
+    pub(crate) fn jupitel_fx(&mut self, from: glam::Vec3, to: glam::Vec3, hits: u32) {
+        use ro_render::Shape::Flip;
+        let travel = to - from;
+        const BALL: [&str; 6] = ["thunder_ball_a.bmp", "thunder_ball_b.bmp", "thunder_ball_c.bmp", "thunder_ball_d.bmp", "thunder_ball_e.bmp", "thunder_ball_f.bmp"];
+        self.proc_fx("thunder_center.bmp", Flip { travel, size: (0.9, 0.9), frame: 0, frames: 1, frame_ms: 1.0, fade: false }, from, [0.66; 3], 200.0);
+        for (k, tex) in BALL.into_iter().enumerate() {
+            self.proc_fx(tex, Flip { travel, size: (1.1, 1.1), frame: k as u8, frames: 6, frame_ms: 10.0, fade: false }, from, [1.0; 3], 200.0);
+        }
+        const BLAST: [&str; 5] = ["thunder_plazma_blast_a.bmp", "thunder_plazma_blast_b.bmp", "thunder_ball_d.bmp", "thunder_ball_e.bmp", "thunder_ball_f.bmp"];
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
+        for i in 0..hits.clamp(1, 20) {
+            let wait = -(200.0 + 200.0 * i as f32);
+            let still = glam::Vec3::ZERO;
+            if let Some(tex) = self.fx.texture(r, vfs, "thunder_pang.bmp") {
+                let shape = Flip { travel: still, size: (0.1, 2.5), frame: 0, frames: 1, frame_ms: 1.0, fade: true };
+                r.procs.push(ro_render::ProcFx { tex, shape, pos: to, color: [1.0; 3], time_ms: wait, duration_ms: 100.0 });
+            }
+            for (k, name) in BLAST.into_iter().enumerate() {
+                if let Some(tex) = self.fx.texture(r, vfs, name) {
+                    let shape = Flip { travel: still, size: (2.0, 2.0), frame: k as u8, frames: 5, frame_ms: 10.0, fade: false };
+                    r.procs.push(ro_render::ProcFx { tex, shape, pos: to, color: [1.0; 3], time_ms: wait, duration_ms: 300.0 });
+                }
+            }
+        }
+    }
+
+    /// A cell of Quagmire (ground unit `id` at `pos`): its mud on the ground, the original's
+    /// three pictures taking turns, until the cell goes.
+    pub(crate) fn quagmire_mud(&mut self, id: u32, pos: glam::Vec3) {
+        for (phase, tex) in ["quagmire_a.bmp", "quagmire_b.bmp", "quagmire_c.bmp"].into_iter().enumerate() {
+            self.proc_fx(tex, ro_render::Shape::Mud { seed: id, phase: phase as u8 }, pos, [1.0; 3], f32::MAX);
+        }
+    }
+
+    /// Spikes of rock erupting in a wave from `from` toward `to` (Grimtooth, Earth Spike,
+    /// Heaven's Drive), effect\stone.bmp's rock.
     pub(crate) fn spike_line(&mut self, from: glam::Vec3, to: glam::Vec3) {
         let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
-        let Some(tex) = self.fx.texture(r, vfs, "dustblast_stick.bmp") else { return };
+        let Some(tex) = self.fx.texture(r, vfs, "stone.bmp") else { return };
         let reach = to - from;
         let count = ((reach.length() / ro_render::CELL) as u32).clamp(3, 12);
         let shape = ro_render::Shape::Spikes { reach, count };
-        r.procs.push(ro_render::ProcFx { tex, shape, pos: from, color: [0.85, 0.7, 0.5], time_ms: 0.0, duration_ms: 650.0 });
+        r.procs.push(ro_render::ProcFx { tex, shape, pos: from, color: [0.95, 0.88, 0.78], time_ms: 0.0, duration_ms: 800.0 });
     }
 
     pub(crate) fn proc_fx(&mut self, tex: &'static str, shape: ro_render::Shape, pos: glam::Vec3, color: [f32; 3], duration_ms: f32) {
