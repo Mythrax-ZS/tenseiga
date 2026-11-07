@@ -106,11 +106,8 @@ impl App {
     /// Nova and Sightrasher, the target for Earth Spike, the cell for Heaven's Drive).
     pub(crate) fn wizard_fx(&mut self, skill: u16, pos: glam::Vec3) {
         match skill {
-            // Sightrasher: a ring of fire bursting out from the caster.
-            81 => {
-                self.proc_fx("fire_a.bmp", ro_render::Shape::Wave { radius: 3.5 }, pos, [1.0, 0.55, 0.25], 700.0);
-                self.play_fx("firehit2", pos);
-            }
+            // Sightrasher: flames rushing out eight ways from the caster (EF_SIGHTRASHER).
+            81 => self.fire_fx(ro_render::FireKind::Rasher, 0, pos, 1100.0),
             // Frost Nova: shards of ice bursting out from the caster's feet (EF_FROSTDIVER2).
             88 => self.horns_fx(ro_render::Horns::FrostNova, "ice.tga", pos, 700.0),
             // Earth Spike: a spike of rock thrust up under the target (EF_EARTHSPIKE), its
@@ -121,6 +118,35 @@ impl App {
             }
             // Heaven's Drive: rock thrust up over its five cells square (EF_HEAVENDRIVE).
             91 => self.horns_fx(ro_render::Horns::HeavensDrive, "stone.bmp", pos, 2500.0),
+            _ => {}
+        }
+    }
+
+    /// Flames of the effect sprite `sight` with their shadows (`ro_render::Shape::Fire`).
+    fn fire_fx(&mut self, kind: ro_render::FireKind, owner: u32, pos: glam::Vec3, duration_ms: f32) {
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
+        let (Some((strip, frames, aspect)), Some(disc)) = (self.fx.sprite_strip(r, vfs, "sight"), self.fx.fx_texture(r, vfs, fx::FxTexture::Disc)) else { return };
+        for (tex, shadow) in [(disc, true), (strip, false)] {
+            let shape = ro_render::Shape::Fire { kind, owner, frames, aspect, shadow };
+            r.procs.push(ro_render::ProcFx { tex, shape, pos, color: [1.0; 3], time_ms: 0.0, duration_ms });
+        }
+    }
+
+    /// Sight's fireball circling unit `id` while its option says so (OPTION_SIGHT), gone
+    /// when it ends.
+    pub(crate) fn sight_fx(&mut self, id: u32, on: bool) {
+        let has = |r: &ro_render::Renderer| r.procs.iter().any(|p| matches!(p.shape, ro_render::Shape::Fire { kind: ro_render::FireKind::Sight, owner, .. } if owner == id));
+        match (on, self.renderer.as_ref().is_some_and(has)) {
+            (true, false) => {
+                if let Some(pos) = self.unit_pos(id) {
+                    self.fire_fx(ro_render::FireKind::Sight, id, pos, f32::MAX);
+                }
+            }
+            (false, true) => {
+                if let Some(r) = self.renderer.as_mut() {
+                    r.procs.retain(|p| !matches!(p.shape, ro_render::Shape::Fire { kind: ro_render::FireKind::Sight, owner, .. } if owner == id));
+                }
+            }
             _ => {}
         }
     }

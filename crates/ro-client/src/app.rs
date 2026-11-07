@@ -1966,6 +1966,7 @@ impl App {
         self.want_emblem(info.guild, info.emblem as u32);
         tracing::debug!(id = info.id, job = info.job, name = %info.name, ?cell, "unit");
         self.units.insert(info.id, mob);
+        self.sight_fx(info.id, info.option & OPTION_SIGHT != 0);
     }
 
     fn lapine_action(&mut self, a: lapine::LapineAction) {
@@ -3365,6 +3366,9 @@ fn dressed(mut look: Look, costume: Option<i16>) -> Look {
 
 /// How opaque a unit is under its OPTION_* flags. Hiding, cloaking and Chase Walk show
 /// you faded; other units (and NPCs cloaked by scripts) vanish entirely.
+/// The option bit for Sight: its fireball circles the unit.
+pub(crate) const OPTION_SIGHT: u32 = 0x1;
+
 fn option_alpha(option: u32, me: bool) -> f32 {
     match (option & (0x2 | 0x4 | 0x40 | 0x4000) != 0, me) {
         (false, _) => 1.0,

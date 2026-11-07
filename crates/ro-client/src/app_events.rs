@@ -1678,6 +1678,7 @@ impl App {
             }
             Font { id, font } => self.font_change(id, font),
             UnitOption { id, option } => {
+                self.sight_fx(id, option & OPTION_SIGHT != 0);
                 let me = id == self.account_id;
                 let costume = costume_job(option);
                 let mut changed = None;

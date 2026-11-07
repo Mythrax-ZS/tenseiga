@@ -148,6 +148,59 @@ pub enum Shape {
     /// the ground and added over it: the three take turns (`phase` 0..3), fading one into the
     /// next. `seed` turns it; it is the ground unit's id, which takes it away again.
     Mud { seed: u32, phase: u8 },
+    /// Flames of the effect sprite `sight` (the texture: its `frames` pictures side by side,
+    /// flickering every 100 ms, each `aspect` wide for its height), standing up a little over
+    /// the ground, alpha-blended; or, if
+    /// `shadow`, their soft shadows on the ground under them (the disc texture, darkening).
+    /// Sight's circle `owner` (the client moves `pos` to it); Sightrasher's rush out from `pos`.
+    Fire { kind: FireKind, owner: u32, frames: u8, aspect: f32, shadow: bool },
+}
+
+/// The kinds of `Shape::Fire`, as the original client shows them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FireKind {
+    /// Sight: a fireball circling its caster at a cell and a third, a trail of fading flames
+    /// behind it, round every 1.25 s.
+    Sight,
+    /// Sightrasher (EF_SIGHTRASHER): flames rushing eight cells out eight ways over 0.8 s,
+    /// four after one another each way, 0.1 s apart, growing as they go.
+    Rasher,
+}
+
+impl FireKind {
+    /// Its flames `ms` in: (offset from `pos` over the ground, height of size cells, strength).
+    fn flames(self, ms: f32) -> Vec<(Vec3, f32, f32)> {
+        match self {
+            FireKind::Sight => {
+                let turn = -ms / 1250.0 * std::f32::consts::TAU;
+                let fade_in = (ms / 300.0).min(1.0);
+                (0..6)
+                    .map(|k| {
+                        let (s, c) = (turn + k as f32 * 0.3).sin_cos();
+                        (Vec3::new(c, 0.0, s) * 1.3 * CELL, 0.9 * (1.0 - 0.1 * k as f32), fade_in * (1.0 - k as f32 / 6.5))
+                    })
+                    .collect()
+            }
+            FireKind::Rasher => {
+                let mut out = vec![];
+                for way in 0..8 {
+                    let (s, c) = (way as f32 / 8.0 * std::f32::consts::TAU).sin_cos();
+                    for d in 0..4 {
+                        let t = (ms - 100.0 * d as f32) / 800.0;
+                        if !(0.0..1.0).contains(&t) {
+                            continue;
+                        }
+                        // The original's sizes (20 to 260, each later flame 60 smaller) and its
+                        // fades in and out over the first and last quarters.
+                        let size = (0.2 + (2.6 - 0.6 * d as f32 - 0.2) * t) * 0.55;
+                        let a = 0.9 * (t * 4.0).min(1.0).min((1.0 - t) * 4.0);
+                        out.push((Vec3::new(c, 0.0, s) * 8.0 * CELL * t, size, a));
+                    }
+                }
+                out
+            }
+        }
+    }
 }
 
 /// How a cast aura's cylinder grows over its first second.
@@ -335,7 +388,8 @@ impl ProcFx {
     /// How it is drawn.
     pub fn blend(&self) -> Blend {
         match self.shape {
-            Shape::Spikes { .. } | Shape::Horns { .. } | Shape::LockOn { .. } | Shape::Rune { .. } => Blend::Solid,
+            Shape::Spikes { .. } | Shape::Horns { .. } | Shape::LockOn { .. } | Shape::Rune { .. } | Shape::Fire { shadow: false, .. } => Blend::Solid,
+            Shape::Fire { shadow: true, .. } => Blend::Shade,
             Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. } | Shape::Footprint { .. } | Shape::Dust { .. } => Blend::Shade,
             _ => Blend::Add,
         }
@@ -1157,6 +1211,26 @@ impl ProcFx {
                 let (right, up) = facing(centre, eye);
                 quad(out, centre, right * half, up * half, [self.color[0], self.color[1], self.color[2], a]);
             }
+            Shape::Fire { kind, frames, aspect, shadow, .. } => {
+                for (i, (offset, size, a)) in kind.flames(self.time_ms).into_iter().enumerate() {
+                    let at = self.pos + offset;
+                    let floor = ground.map_or(self.pos.y, |g| g.at(at.x, at.z));
+                    if shadow {
+                        let half = size * 0.35 * CELL;
+                        let c = Vec3::new(at.x, floor + 0.15, at.z);
+                        quad(out, c, Vec3::X * half, Vec3::Z * half, [0.0, 0.0, 0.0, a * 0.45]);
+                    } else {
+                        // Each flame flickers through the pictures on its own beat.
+                        let n = frames.max(1) as usize;
+                        let p = ((self.time_ms / 100.0) as usize + i) % n;
+                        let half = size * 0.5 * CELL;
+                        // Standing on the ground a little way up, its foot a third of a cell over it.
+                        let centre = Vec3::new(at.x, floor + CELL / 3.0 + half, at.z);
+                        let (right, up) = facing(centre, eye);
+                        quad_u(out, centre, right * half * aspect, up * half, p as f32 / n as f32, (p + 1) as f32 / n as f32, [self.color[0], self.color[1], self.color[2], a]);
+                    }
+                }
+            }
             Shape::Mud { seed, phase } => {
                 // A round of the three every 0.45 s; together they stay about as bright.
                 let turn = (self.time_ms / 450.0 - phase as f32 / 3.0) * std::f32::consts::TAU;
@@ -1212,6 +1286,22 @@ mod drape_tests {
         assert_eq!(drawn(flip(0, -5.0)), 0);
         // 25 ms in is the third beat: frame 2 shows, the others wait for theirs.
         assert_eq!((drawn(flip(0, 25.0)), drawn(flip(1, 25.0)), drawn(flip(2, 25.0))), (0, 0, 6));
+    }
+
+    #[test]
+    fn sightrasher_flames_rush_eight_cells_out_eight_ways() {
+        // At the start only the first flame each way has set off.
+        assert_eq!(FireKind::Rasher.flames(50.0).len(), 8);
+        // All four each way are out at 0.35 s.
+        assert_eq!(FireKind::Rasher.flames(350.0).len(), 32);
+        // The first ones are nearly eight cells out as they end, and all are gone by 1.1 s.
+        let far = FireKind::Rasher.flames(790.0).iter().map(|f| f.0.length()).fold(0.0, f32::max);
+        assert!(far > 7.8 * CELL && far < 8.0 * CELL, "{far}");
+        assert!(FireKind::Rasher.flames(1100.0).is_empty());
+        // Sight's fireball and its trail circle a cell and a third out.
+        let sight = FireKind::Sight.flames(500.0);
+        assert_eq!(sight.len(), 6);
+        assert!(sight.iter().all(|f| (f.0.length() - 1.3 * CELL).abs() < 1e-3));
     }
 
     #[test]
