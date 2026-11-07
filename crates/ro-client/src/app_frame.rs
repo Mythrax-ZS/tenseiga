@@ -1016,15 +1016,29 @@ impl App {
                 }
             }
         }
-        // Lock-on rings follow the targets of the casts they show.
-        let targets: Vec<(usize, u32)> = self.renderer.as_ref().map_or_else(Vec::new, |r| {
-            r.procs.iter().enumerate().filter_map(|(i, p)| if let ro_render::Shape::LockOn { target, .. } = p.shape { Some((i, target)) } else { None }).collect()
+        // Lock-on rings follow the targets of the casts they show; Sight's fireball its
+        // caster, and goes with it.
+        let targets: Vec<(usize, u32, bool)> = self.renderer.as_ref().map_or_else(Vec::new, |r| {
+            r.procs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| match p.shape {
+                    ro_render::Shape::LockOn { target, .. } => Some((i, target, false)),
+                    ro_render::Shape::Fire { kind: ro_render::FireKind::Sight, owner, .. } => Some((i, owner, true)),
+                    _ => None,
+                })
+                .collect()
         });
         if !targets.is_empty() {
-            let placed: Vec<(usize, glam::Vec3)> = targets.into_iter().filter_map(|(i, t)| Some((i, self.unit_pos(t)?))).collect();
+            let placed: Vec<(usize, Option<glam::Vec3>, bool)> = targets.into_iter().map(|(i, t, sight)| (i, self.unit_pos(t), sight)).collect();
             if let Some(r) = self.renderer.as_mut() {
-                for (i, pos) in placed {
-                    r.procs[i].pos = pos;
+                for &(i, pos, sight) in &placed {
+                    match pos {
+                        Some(pos) => r.procs[i].pos = pos,
+                        // Ends now: past its time.
+                        None if sight => r.procs[i].time_ms = f32::MAX,
+                        None => {}
+                    }
                 }
             }
         }

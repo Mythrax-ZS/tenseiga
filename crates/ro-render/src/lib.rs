@@ -28,7 +28,7 @@ pub use upscale::{is_sprite_path, AssetClass, Quality as UpscaleQuality, Upscale
 pub use water::{flag as water_flag, Foam, WaterMesh, WaterQuality, WaterSettings};
 pub use weather::{WeatherKind, WeatherLayer};
 pub use windows::window_mask;
-pub use effect::{AuraLayer, AuraStyle, FireworkPart, Grow, Horns, ProcFx, Shape, TenseigaPart, TexId, FIREWORK_BURST_MS, FIREWORK_MS};
+pub use effect::{AuraLayer, AuraStyle, FireKind, FireworkPart, Grow, Horns, ProcFx, Shape, TenseigaPart, TexId, FIREWORK_BURST_MS, FIREWORK_MS};
 pub use particle::{Emitter, EmitterDef, Glow, Waterfall, Wind};
 pub use fx::{Fx, FxId};
 pub use post::PostSettings;

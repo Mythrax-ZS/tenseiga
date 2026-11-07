@@ -737,6 +737,8 @@ pub struct FxLib {
     /// Textures made in code (`FxTexture::Streak`, `Ring`).
     generated: HashMap<FxTexture, ro_render::TexId>,
     sprites: HashMap<&'static str, Option<ro_render::SheetId>>,
+    /// Effect sprites' pictures side by side (see `sprite_strip`).
+    strips: HashMap<&'static str, Option<(ro_render::TexId, u8, f32)>>,
     /// STR paths under effect that sit in subfolders (see `index`).
     strs: Vec<String>,
 }
@@ -870,6 +872,53 @@ impl FxLib {
     }
 
     /// A sprite effect from data\sprite\이팩트\.
+    /// An effect sprite's (data\sprite\이팩트\<name>.spr) pictures side by side in one
+    /// texture, for flipbooks drawn in code: (texture, pictures, width over height of each).
+    /// Each is centred in an equal slot cropped to what any of them covers, so a picture's
+    /// size is the art's own, not its empty canvas. Straight alpha, as the sprite has it.
+    pub fn sprite_strip(&mut self, r: &mut ro_render::Renderer, vfs: &ro_vfs::Vfs, name: &'static str) -> Option<(ro_render::TexId, u8, f32)> {
+        *self.strips.entry(name).or_insert_with(|| {
+            let spr = vfs.read(&format!("data\\sprite\\이팩트\\{name}.spr")).ok().flatten().and_then(|d| ro_formats::spr::Spr::parse(&d).ok())?;
+            let pictures = if spr.rgba.is_empty() { spr.images(None).0 } else { spr.rgba.clone() };
+            let side = pictures.iter().map(|p| p.width.max(p.height)).max().filter(|&s| s > 0)?;
+            let n = pictures.len().min(255) as u32;
+            // What the pictures cover, centred in a side x side square.
+            let (mut lo, mut hi) = ((side, side), (0, 0));
+            for p in pictures.iter().take(n as usize) {
+                let (ox, oy) = ((side - p.width) / 2, (side - p.height) / 2);
+                for y in 0..p.height {
+                    for x in 0..p.width {
+                        if p.pixels[((y * p.width + x) * 4 + 3) as usize] > 8 {
+                            lo = (lo.0.min(ox + x), lo.1.min(oy + y));
+                            hi = (hi.0.max(ox + x + 1), hi.1.max(oy + y + 1));
+                        }
+                    }
+                }
+            }
+            if hi.0 <= lo.0 || hi.1 <= lo.1 {
+                return None;
+            }
+            let (w, h) = (hi.0 - lo.0, hi.1 - lo.1);
+            let mut pixels = vec![0u8; (w * n * h * 4) as usize];
+            for (k, p) in pictures.iter().take(n as usize).enumerate() {
+                let (ox, oy) = ((side - p.width) / 2, (side - p.height) / 2);
+                for y in 0..p.height {
+                    for x in 0..p.width {
+                        let (sx, sy) = (ox + x, oy + y);
+                        if sx < lo.0 || sx >= hi.0 || sy < lo.1 || sy >= hi.1 {
+                            continue;
+                        }
+                        let from = ((y * p.width + x) * 4) as usize;
+                        let to = (((sy - lo.1) * w * n + k as u32 * w + (sx - lo.0)) * 4) as usize;
+                        pixels[to..to + 4].copy_from_slice(&p.pixels[from..from + 4]);
+                    }
+                }
+            }
+            let img = ro_formats::image::Rgba { width: w * n, height: h, pixels };
+            Some((r.add_effect_texture(&img), n as u8, w as f32 / h as f32))
+        })
+    }
+
     pub fn sprite(&mut self, r: &mut ro_render::Renderer, vfs: &ro_vfs::Vfs, name: &'static str) -> Option<ro_render::SheetId> {
         *self.sprites.entry(name).or_insert_with(|| {
             let base = format!("data\\sprite\\이팩트\\{name}");
