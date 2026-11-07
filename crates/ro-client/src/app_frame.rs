@@ -1016,6 +1016,18 @@ impl App {
                 }
             }
         }
+        // Lock-on rings follow the targets of the casts they show.
+        let targets: Vec<(usize, u32)> = self.renderer.as_ref().map_or_else(Vec::new, |r| {
+            r.procs.iter().enumerate().filter_map(|(i, p)| if let ro_render::Shape::LockOn { target, .. } = p.shape { Some((i, target)) } else { None }).collect()
+        });
+        if !targets.is_empty() {
+            let placed: Vec<(usize, glam::Vec3)> = targets.into_iter().filter_map(|(i, t)| Some((i, self.unit_pos(t)?))).collect();
+            if let Some(r) = self.renderer.as_mut() {
+                for (i, pos) in placed {
+                    r.procs[i].pos = pos;
+                }
+            }
+        }
         if let Some(cell) = self.navi_walk.take() {
             self.request_walk(cell);
         }

@@ -151,13 +151,53 @@ pub fn skill_hit(skill: u16) -> HitVisual {
         21 | 85 => HitVisual::OneOf(WIND),
         // Fire Wall, Sightrasher, Meteor Storm.
         18 | 81 | 83 => HitVisual::OneOf(FIRE),
-        // Frost Nova.
-        88 => HitVisual::OneOf(&["icecrash"]),
         // Heaven's Drive.
         91 => HitVisual::OneOf(&["earthhit"]),
-        // Storm Gust.
-        89 => HitVisual::Nothing,
+        // Storm Gust, Frost Nova: their cold hits are only a sound.
+        88 | 89 => HitVisual::Nothing,
         _ => HitVisual::Own,
+    }
+}
+
+/// How many cells across the magic circle is under an area spell being cast (the original's
+/// per-skill area plus two, as roBrowser has it); the original draws a 2 x 2 one for ground
+/// skills it does not list.
+pub fn cast_circle(skill: u16) -> f32 {
+    match skill {
+        // Pneuma, Fire Pillar.
+        25 | 80 => 5.0,
+        // Thunderstorm, Heaven's Drive, Quagmire.
+        21 | 91 | 92 => 7.0,
+        // Meteor Storm, Storm Gust.
+        83 | 89 => 11.0,
+        // Lord of Vermilion.
+        85 => 13.0,
+        _ => 2.0,
+    }
+}
+
+/// The radius of a cast aura's cylinders at the caster's feet (cells).
+pub const AURA_BASE: f32 = 0.7;
+
+/// One cylinder of a cast aura: top radius and height (cells), how it grows, its strength.
+pub type AuraCylinder = (f32, f32, ro_render::Grow, f32);
+
+/// A caster's aura for a spell of `element` (the original's EF_BEGINSPELL family, as
+/// roBrowser has them): its texture, tint, whether it turns, and its cylinders (each
+/// opening up from `AURA_BASE` cells' radius at the feet). Earth's and wind's are as the original
+/// client shows them (pale green for Earth Spike, yellow for Lord of Vermilion).
+pub fn cast_aura(element: u32) -> (&'static str, [f32; 3], bool, &'static [AuraCylinder]) {
+    use ro_render::Grow::{Height, Top};
+    match element {
+        1 => ("ring_blue.tga", [0.5, 0.5, 1.0], true, &[(1.0, 30.0, Height, 0.2), (1.3, 1.0, Height, 0.2), (4.0, 3.0, Top, 0.6)]),
+        // ring_white is brighter than the coloured rings: half strength, as faint as the
+        // original's.
+        2 => ("ring_white.tga", [0.6, 1.0, 0.6], true, &[(1.0, 30.0, Height, 0.15), (1.3, 2.0, Height, 0.3), (4.0, 3.0, Top, 0.3)]),
+        3 => ("ring_red.tga", [1.0, 0.4, 0.4], true, &[(1.0, 30.0, Height, 0.3), (1.3, 2.0, Height, 0.7), (4.0, 3.0, Top, 0.7)]),
+        4 => ("ring_yellow.tga", [1.0, 1.0, 1.0], true, &[(1.0, 30.0, Height, 0.5), (1.3, 3.0, Height, 1.0), (4.0, 3.0, Top, 1.0)]),
+        5 | 7 | 9 => ("ring_purple.tga", [0.8, 0.8, 0.8], true, &[(1.0, 30.0, Height, 0.3), (1.3, 3.0, Height, 0.7), (4.0, 3.0, Top, 0.7)]),
+        6 | 8 => ("ring_white.tga", [1.0, 1.0, 1.0], true, &[(5.0, 4.0, Top, 0.8)]),
+        _ => ("ring_yellow.tga", [1.0, 1.0, 1.0], false, &[(5.0, 4.0, Top, 0.8)]),
     }
 }
 
@@ -298,11 +338,25 @@ mod hit_tests {
         // A bolt's effect is its hit; Earth Spike's spikes are drawn on its target.
         assert_eq!(skill_hit(19), HitVisual::Own);
         assert_eq!((skill_visual(90), skill_hit(90)), (Some(Visual::Code), HitVisual::Own));
-        // Heaven's Drive, Frost Nova and Sightrasher: drawn once, a small hit on each target.
-        for skill in [81, 88, 91] {
+        // Heaven's Drive and Sightrasher: drawn once, a small hit on each target.
+        for skill in [81, 91] {
             assert_eq!(skill_visual(skill), Some(Visual::Code));
             assert!(matches!(skill_hit(skill), HitVisual::OneOf(_)));
         }
+        // Frost Nova: drawn once at the caster; its cold hits are only a sound.
+        assert_eq!((skill_visual(88), skill_hit(88)), (Some(Visual::Code), HitVisual::Nothing));
+    }
+
+    #[test]
+    fn area_spells_cast_inside_a_circle_as_wide_as_the_original_draws_it() {
+        // Storm Gust's 11 cells, Lord of Vermilion's 13, Heaven's Drive's 7.
+        assert_eq!((cast_circle(89), cast_circle(85), cast_circle(91)), (11.0, 13.0, 7.0));
+        // Unlisted ground skills (Ice Wall) get the original's small one.
+        assert_eq!(cast_circle(87), 2.0);
+        // Water casts in blue, a tall pillar over a flaring bowl; unknown elements as neutral.
+        let (tex, _, spins, rings) = cast_aura(1);
+        assert_eq!((tex, spins, rings.len()), ("ring_blue.tga", true, 3));
+        assert_eq!(cast_aura(42).0, cast_aura(0).0);
     }
 }
 

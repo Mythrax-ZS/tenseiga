@@ -52,6 +52,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     let t = textureSample(tex, samp, in.uv);
+    if SOLID {
+        // Alpha-blended (premultiplied) and textured: the texture's own colours tinted by the
+        // vertex colour, like a model's (rock, ice, a ring drawn in colour).
+        let a = t.a * in.color.a;
+        return vec4(srgb_to_linear(t.rgb) * in.color.rgb * a, a);
+    }
     if SHADE {
         // Alpha-blended (premultiplied): the vertex colour itself, shaped by the texture's
         // alpha. Paints true colour (crimson stays crimson) and darkens pale ground, where
@@ -63,8 +69,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4(srgb_to_linear(t.rgb) * in.color.rgb * t.a * in.color.a, 1.0);
 }
 
-// The renderer builds this shader twice: additive, and with SHADE set for the shade pipeline.
+// The renderer builds this shader three times: additive, with SHADE set for the shade
+// pipeline, and with SOLID set for the solid one.
 const SHADE: bool = false;
+const SOLID: bool = false;
 /// Indoors, only the room the player is in is drawn (other rooms share the map).
 fn in_room(world: vec3<f32>) -> bool {
     if g.room.x < 0.5 {

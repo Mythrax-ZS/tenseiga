@@ -119,6 +119,58 @@ pub enum Shape {
     /// One piece of a firework (the fireworks mapflag): a rocket going up from `pos`, bursting
     /// `rise` cells over it `FIREWORK_BURST_MS` in, in the effect's colour; `seed` varies it.
     Firework { part: FireworkPart, seed: u32, rise: f32 },
+    /// The original's QuadHorn effects: four-sided spikes thrust up out of the ground around
+    /// `pos` (Ice Wall's ice, Earth Spike's and Heaven's Drive's rock), solid
+    /// (alpha-blended) with their faces lit from one side. `seed` varies them; Ice Wall's is
+    /// its ground unit's id, which takes it away again.
+    Horns { kind: Horns, seed: u32 },
+    /// A cast's aura around its caster (the original's EF_BEGINSPELL, roBrowser's Cylinder):
+    /// an open cone frustum, radii and height in cells, added over the scene, the texture
+    /// turning around it if `spin`. It grows (`grow`) over its first second, fades in over
+    /// its first quarter and out over its last. `owner` is the caster, whose cancelled cast
+    /// takes it away.
+    Cylinder { bottom: f32, top: f32, height: f32, grow: Grow, alpha: f32, spin: bool, owner: u32 },
+    /// The lock-on ring (effect\lockon128.tga) under the target of a cast: lying on the
+    /// ground, turning, shrinking from 15 cells across to 3 over its first quarter second,
+    /// its green and blue pulsing down and up every 0.4 s. It follows `target` (the client
+    /// moves `pos`); `owner` is the caster.
+    LockOn { target: u32, owner: u32 },
+    /// The magic circle (effect\magic_target.tga) on the ground where an area spell is
+    /// being cast, `size` cells across, slowly turning and breathing; `owner` is the caster.
+    Rune { size: f32, owner: u32 },
+}
+
+/// How a cast aura's cylinder grows over its first second.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grow {
+    /// Up from the ground to its full height.
+    Height,
+    /// Its top opening out from nothing to its full width.
+    Top,
+}
+
+/// The kinds of `Shape::Horns`, after the original's (roBrowser's QuadHorn tables).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Horns {
+    /// One cell of an Ice Wall (EF_ICEWALL): three tall shards of ice, standing until the
+    /// wall's cell melts or breaks.
+    IceWall,
+    /// EF_EARTHSPIKE: a spike of rock under the target, four small ones around it.
+    EarthSpike,
+    /// EF_HEAVENDRIVE: a spike of rock on each cell of the five by five square around `pos`.
+    HeavensDrive,
+    /// Frost Nova: eight shards of ice bursting outward from the caster's feet.
+    FrostNova,
+}
+
+impl Shape {
+    /// The caster whose cast this effect shows (a cast aura, lock-on or magic circle).
+    pub fn cast_owner(&self) -> Option<u32> {
+        match *self {
+            Shape::Cylinder { owner, .. } | Shape::LockOn { owner, .. } | Shape::Rune { owner, .. } => Some(owner),
+            _ => None,
+        }
+    }
 }
 
 /// When a firework's rocket bursts (ms after it goes up).
@@ -257,10 +309,26 @@ pub enum AuraLayer {
     Shade,
 }
 
+/// How a code-drawn effect is laid over the scene.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blend {
+    /// Added: light (glows, flames, beams).
+    Add,
+    /// Alpha-blended in its vertex colour, the texture only shaping it (darkening shades,
+    /// true-colour paint).
+    Shade,
+    /// Alpha-blended in the texture's own colours (rock, ice, rings drawn in colour).
+    Solid,
+}
+
 impl ProcFx {
-    /// Drawn alpha-blended (darkening) rather than added.
-    pub fn shades(&self) -> bool {
-        matches!(self.shape, Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. } | Shape::Footprint { .. } | Shape::Dust { .. } | Shape::Spikes { .. })
+    /// How it is drawn.
+    pub fn blend(&self) -> Blend {
+        match self.shape {
+            Shape::Spikes { .. } | Shape::Horns { .. } | Shape::LockOn { .. } | Shape::Rune { .. } => Blend::Solid,
+            Shape::Aura { layer: AuraLayer::Shade, .. } | Shape::Tenseiga { solid: true, .. } | Shape::Crescent { solid: true, .. } | Shape::Cell { .. } | Shape::Confetti { .. } | Shape::Footprint { .. } | Shape::Dust { .. } => Blend::Shade,
+            _ => Blend::Add,
+        }
     }
 }
 
@@ -742,6 +810,124 @@ fn crescent(solid: bool, pos: Vec3, travel: Vec3, t: f32, eye: Vec3, ground: Opt
     }
 }
 
+/// One spike of a `Shape::Horns`: where it stands (cells from `pos`), how tall and how wide
+/// (half its base, cells), turned `yaw` and leaning `lean` (radians toward x and z).
+struct Horn {
+    at: (f32, f32),
+    height: f32,
+    half: f32,
+    yaw: f32,
+    lean: (f32, f32),
+}
+
+impl Horns {
+    /// Its spikes, the same each frame for the same `seed`.
+    fn spikes(self, seed: u32) -> Vec<Horn> {
+        let mut n = 0u32;
+        let mut r = |lo: f32, hi: f32| {
+            n += 1;
+            lo + (hi - lo) * (hash(seed ^ n.wrapping_mul(0x9e37_79b9)) & 0xffff) as f32 / 65535.0
+        };
+        let deg = |d: f32| d.to_radians();
+        match self {
+            Horns::IceWall => [(2.8, 3.3), (2.3, 2.8), (2.5, 2.9)]
+                .map(|(lo, hi)| Horn { at: (r(-0.25, 0.25), r(-0.25, 0.25)), height: r(lo, hi), half: r(0.3, 0.5), yaw: r(0.0, 6.283), lean: (0.0, 0.0) })
+                .into(),
+            Horns::EarthSpike => {
+                let mut v = vec![Horn { at: (0.0, 0.0), height: r(0.95, 1.5), half: r(0.5, 0.6), yaw: r(0.0, 6.283), lean: (deg(r(-8.0, 8.0)), deg(r(-8.0, 8.0))) }];
+                for (x, z) in [(0.7, 0.3), (-0.6, 0.5), (-0.4, -0.7), (0.5, -0.6)] {
+                    v.push(Horn { at: (x, z), height: r(0.2, 0.4), half: r(0.1, 0.2), yaw: r(0.0, 6.283), lean: (deg(r(-15.0, 15.0)), deg(r(-15.0, 15.0))) });
+                }
+                v
+            }
+            Horns::HeavensDrive => (-2..=2)
+                .flat_map(|i| (-2..=2).map(move |j| (i as f32, j as f32)))
+                .map(|(i, j)| Horn { at: (i - 0.3, j - 0.3), height: r(0.75, 1.2), half: r(0.4, 0.7), yaw: r(0.0, 6.283), lean: (deg(r(-8.0, 8.0)), deg(r(-8.0, 8.0))) })
+                .collect(),
+            Horns::FrostNova => (0..8)
+                .map(|k| {
+                    let a = k as f32 / 8.0 * std::f32::consts::TAU + r(-0.2, 0.2);
+                    let (s, c) = a.sin_cos();
+                    // Leaning out, away from the caster.
+                    Horn { at: (c * 0.7, s * 0.7), height: r(1.1, 1.5), half: r(0.2, 0.3), yaw: r(0.0, 6.283), lean: (c * 0.6, s * 0.6) }
+                })
+                .collect(),
+        }
+    }
+
+    /// How far up it has come (0..1) `ms` into an effect lasting `duration_ms`: thrust up
+    /// at the original's pace, then for rock sunk back into the ground at its end.
+    fn rise(self, height: f32, ms: f32, duration_ms: f32) -> f32 {
+        // The original's animationSpeed: ms per cell of height.
+        let (up, down) = match self {
+            Horns::IceWall => (50.0, None),
+            Horns::EarthSpike => (120.0, Some(120.0)),
+            Horns::HeavensDrive => (250.0, Some(250.0)),
+            Horns::FrostNova => (60.0, None),
+        };
+        let rising = (ms / (up * height)).min(1.0);
+        let sinking = down.map_or(1.0, |d| ((duration_ms - ms) / (d * height)).clamp(0.0, 1.0));
+        rising.min(sinking)
+    }
+}
+
+/// `Shape::Horns`: each spike a four-sided pyramid on the ground, its faces each showing the
+/// whole texture (apex at the top), only those facing the camera drawn, farthest spikes
+/// first.
+fn horns(kind: Horns, seed: u32, pos: Vec3, ms: f32, duration_ms: f32, tint: [f32; 3], eye: Vec3, ground: Option<&Heights>, out: &mut Vec<Vertex>) {
+    let mut spikes = kind.spikes(seed);
+    let base_of = |h: &Horn| {
+        let (x, z) = (pos.x + h.at.0 * CELL, pos.z + h.at.1 * CELL);
+        Vec3::new(x, ground.map_or(pos.y, |g| g.at(x, z)), z)
+    };
+    spikes.sort_by(|a, b| base_of(b).distance_squared(eye).total_cmp(&base_of(a).distance_squared(eye)));
+    // Frost Nova's shards melt away over their last third.
+    let alpha = match kind {
+        Horns::FrostNova => (3.0 * (1.0 - ms / duration_ms.max(1.0))).clamp(0.0, 1.0) * 0.85,
+        _ => 1.0,
+    };
+    let light = Vec3::new(0.45, 0.75, -0.5).normalize();
+    for h in &spikes {
+        let up = kind.rise(h.height, ms, duration_ms);
+        if up <= 0.0 {
+            continue;
+        }
+        // Thrust up from below: the whole spike rises out of the ground.
+        let sunk = (1.0 - up) * h.height * CELL + 0.1 * CELL;
+        let base = base_of(h) - Vec3::new(0.0, sunk, 0.0);
+        let apex = base + Vec3::new(h.lean.0.sin(), h.lean.0.cos() * h.lean.1.cos(), h.lean.1.sin()).normalize() * h.height * CELL;
+        let (s, c) = h.yaw.sin_cos();
+        let corner = |k: f32| {
+            let (x, z) = ([1.0, -1.0, -1.0, 1.0][k as usize] * h.half * CELL, [1.0, 1.0, -1.0, -1.0][k as usize] * h.half * CELL);
+            base + Vec3::new(x * c - z * s, 0.0, x * s + z * c)
+        };
+        for k in 0..4 {
+            let (p0, p1) = (corner(k as f32), corner(((k + 1) % 4) as f32));
+            // Outward: the corners run counter-clockwise seen from above.
+            let normal = (apex - p0).cross(p1 - p0).normalize_or_zero();
+            let mid = (p0 + p1 + apex) / 3.0;
+            if normal.dot(eye - mid) < 0.0 {
+                continue;
+            }
+            let lit = 0.55 + 0.45 * normal.dot(light).abs();
+            let color = [tint[0] * lit, tint[1] * lit, tint[2] * lit, alpha];
+            out.extend([
+                Vertex { pos: p0.into(), uv: [0.0, 1.0], color },
+                Vertex { pos: p1.into(), uv: [1.0, 1.0], color },
+                Vertex { pos: apex.into(), uv: [0.5, 0.0], color },
+            ]);
+        }
+    }
+}
+
+/// A square `half` cells either side of `centre`, turned `angle` and laid over the ground.
+fn ground_square(out: &mut Vec<Vertex>, centre: Vec3, half: f32, angle: f32, color: [f32; 4], ground: Option<&Heights>) {
+    let (s, c) = angle.sin_cos();
+    let h = half * CELL;
+    let v = |x: f32, z: f32, u: f32, vv: f32| Vertex { pos: (centre + Vec3::new(x * c - z * s, 0.2, x * s + z * c)).into(), uv: [u, vv], color };
+    drape(out, [v(-h, -h, 0.0, 0.0), v(h, -h, 1.0, 0.0), v(h, h, 1.0, 1.0), v(-h, h, 0.0, 1.0)], ground, 0.25);
+}
+
 fn hash(mut x: u32) -> u32 {
     x ^= x >> 16;
     x = x.wrapping_mul(0x7feb_352d);
@@ -927,6 +1113,37 @@ impl ProcFx {
                 out.extend([a, b, cc, a, cc, d]);
             }
             Shape::Ring { radius, width } => ring(self.pos, radius, width, color, ground, out),
+            Shape::Horns { kind, seed } => horns(kind, seed, self.pos, self.time_ms, self.duration_ms, self.color, eye, ground, out),
+            Shape::Cylinder { bottom, top, height, grow, alpha, spin, .. } => {
+                // Grows over its first second (or all of a shorter cast).
+                let g = (self.time_ms / self.duration_ms.min(1000.0).max(1.0)).min(1.0);
+                let (top, height) = match grow {
+                    Grow::Height => (top, height * g),
+                    Grow::Top => (top * g, height),
+                };
+                // In over the first quarter, out over the last.
+                let q = self.duration_ms.max(1.0) / 4.0;
+                let a = alpha * (self.time_ms / q).min(1.0).min((self.duration_ms - self.time_ms) / q).clamp(0.0, 1.0);
+                // 250 degrees a second; the texture wraps twice around.
+                let turn = if spin { self.time_ms / 1000.0 * 250.0 / 360.0 * 2.0 } else { 0.0 };
+                cylinder(out, self.pos, bottom * CELL, top * CELL, height * CELL, turn, [self.color[0], self.color[1], self.color[2], a]);
+            }
+            Shape::LockOn { .. } => {
+                // From 15 cells across to 3 in steps of 50 ms (roBrowser's LockOnTarget).
+                let step = (self.time_ms / 50.0).clamp(1.0, 5.0);
+                let size = (6.0 - step) * 3.0;
+                // Green and blue step down and back every 20 ms, round every 0.4 s.
+                let gb = (20 - (self.time_ms / 20.0) as i32 % 20) as f32 / 20.0;
+                let angle = (self.time_ms / 4.0).to_radians();
+                ground_square(out, self.pos, size / 2.0, angle, [self.color[0], self.color[1] * gb, self.color[2] * gb, 1.0], ground);
+            }
+            Shape::Rune { size, .. } => {
+                // The original turns it 0.5 / size radians a tick (60 a second), its alpha
+                // breathing with the turn.
+                let angle = 0.5 / size.max(1.0) * self.time_ms / (1000.0 / 60.0);
+                let a = (128.0 + 40.0 * angle.sin()) / 255.0;
+                ground_square(out, self.pos, size / 2.0, angle, [self.color[0], self.color[1], self.color[2], a], ground);
+            }
             Shape::Area { size } => {
                 let (hx, hz) = (size.0 * CELL / 2.0, size.1 * CELL / 2.0);
                 let v = |x: f32, z: f32, u: f32, vv: f32| Vertex { pos: (self.pos + Vec3::new(x, 0.2, z)).into(), uv: [u, vv], color };
@@ -954,6 +1171,24 @@ mod drape_tests {
         drape(&mut out, [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)], Some(&ground), 0.5);
         assert_eq!(out.len(), 12 * 12 * 6);
         assert!(out.iter().all(|p| (p.pos[1] - ground.at(p.pos[0], p.pos[2]) - 0.5).abs() < 1e-4));
+    }
+
+    #[test]
+    fn a_spike_shows_the_faces_turned_to_the_camera() {
+        let spikes = |time_ms| ProcFx { tex: TexId(0), shape: Shape::Horns { kind: Horns::EarthSpike, seed: 7 }, pos: Vec3::ZERO, color: [1.0; 3], time_ms, duration_ms: 3000.0 };
+        // From overhead, every face of the five spikes turns up to the camera.
+        let mut above = vec![];
+        spikes(1500.0).vertices(Vec3::new(0.0, 500.0, 1.0), None, &mut above);
+        assert_eq!(above.len(), 5 * 4 * 3);
+        // From the side, only the near faces.
+        let mut side = vec![];
+        spikes(1500.0).vertices(Vec3::new(500.0, 1.0, 0.0), None, &mut side);
+        assert!((5 * 3..above.len()).contains(&side.len()), "{}", side.len());
+        // Not yet up at the start, and sunk again at the end.
+        let mut none = vec![];
+        spikes(0.0).vertices(Vec3::new(0.0, 500.0, 1.0), None, &mut none);
+        spikes(3000.0).vertices(Vec3::new(0.0, 500.0, 1.0), None, &mut none);
+        assert!(none.is_empty());
     }
 
     #[test]

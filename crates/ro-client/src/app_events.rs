@@ -1394,13 +1394,7 @@ impl App {
                 if c.ms > 0 {
                     self.casts.insert(c.src, (0.0, c.ms as f32));
                     self.cast_skill.insert(c.src, c.skill);
-                    // The magic circle under the caster while chanting.
-                    if let (Some(pos), Some(r), Some(vfs)) = (self.unit_pos(c.src), self.renderer.as_mut(), self.vfs.as_deref()) {
-                        if let Some(tex) = self.fx.texture(r, vfs, "magic_target.tga") {
-                            let shape = ro_render::Shape::Disc { radius: 1.6, spin: 0.25 };
-                            r.procs.push(ro_render::ProcFx { tex, shape, pos, color: [1.0, 1.0, 1.0], time_ms: 0.0, duration_ms: c.ms as f32 });
-                        }
-                    }
+                    self.cast_fx(&c);
                 }
             }
             Fed { homun, ok, item } => {
@@ -1539,6 +1533,9 @@ impl App {
                     self.haptics.end_charge();
                 }
                 self.casts.remove(&id);
+                if let Some(r) = self.renderer.as_mut() {
+                    r.procs.retain(|p| p.shape.cast_owner() != Some(id));
+                }
                 if let Some(m) = self.mob_mut(id) {
                     if matches!(m.pose, Some((Pose::Cast, _))) {
                         m.pose = None;
@@ -1698,6 +1695,10 @@ impl App {
                 if let (Some(path), Some(pos)) = (fx::trap_model(kind), self.cell_pos(cell)) {
                     let draws = self.trap_draws(path, pos);
                     self.traps.insert(id, draws);
+                } else if let (0x8d, Some(pos)) = (kind, self.cell_pos(cell)) {
+                    // A cell of Ice Wall (EF_ICEWALL): its shards stand until the cell goes.
+                    let shape = ro_render::Shape::Horns { kind: ro_render::Horns::IceWall, seed: id };
+                    self.proc_fx("ice.tga", shape, pos, [1.0; 3], f32::MAX);
                 } else if let (0x87, Some(pos)) = (kind, self.cell_pos(cell)) {
                     // A Fire Pillar waiting to go off (EF_FIREPILLARON): a red column for 5 s.
                     self.proc_fx("magic_red.tga", ro_render::Shape::Column { radius: 1.0, height: 3.0 }, pos, [1.0; 3], 5000.0);
@@ -1710,6 +1711,9 @@ impl App {
             }
             GroundEffectGone(id) => {
                 self.stop_fx(id);
+                if let Some(r) = self.renderer.as_mut() {
+                    r.procs.retain(|p| !matches!(p.shape, ro_render::Shape::Horns { kind: ro_render::Horns::IceWall, seed } if seed == id));
+                }
                 self.traps.remove(&id);
                 self.ground_units.remove(&id);
                 self.graffiti.remove(&id);

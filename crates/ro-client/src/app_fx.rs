@@ -105,31 +105,56 @@ impl App {
     /// The Wizard's effects the original client draws in code, at `pos` (the caster for Frost
     /// Nova and Sightrasher, the target for Earth Spike, the cell for Heaven's Drive).
     pub(crate) fn wizard_fx(&mut self, skill: u16, pos: glam::Vec3) {
-        let cell = ro_render::CELL;
         match skill {
             // Sightrasher: a ring of fire bursting out from the caster.
             81 => {
                 self.proc_fx("fire_a.bmp", ro_render::Shape::Wave { radius: 3.5 }, pos, [1.0, 0.55, 0.25], 700.0);
                 self.play_fx("firehit2", pos);
             }
-            // Frost Nova: a ring of ice bursting out from the caster.
-            88 => {
-                self.proc_fx("freeze_ice.bmp", ro_render::Shape::Wave { radius: 2.5 }, pos, [0.6, 0.85, 1.0], 800.0);
-            }
-            // Earth Spike: spikes of stone thrusting up under the target.
+            // Frost Nova: shards of ice bursting out from the caster's feet (EF_FROSTDIVER2).
+            88 => self.horns_fx(ro_render::Horns::FrostNova, "ice.tga", pos, 700.0),
+            // Earth Spike: a spike of rock thrust up under the target (EF_EARTHSPIKE), its
+            // earth hit flashing there.
             90 => {
-                let half = glam::Vec3::new(0.6 * cell, 0.0, 0.4 * cell);
-                self.spike_line(pos - half, pos + half);
+                self.horns_fx(ro_render::Horns::EarthSpike, "stone.bmp", pos, 3000.0);
                 self.play_fx("earthhit", pos);
             }
-            // Heaven's Drive: spikes thrusting up across its five cells square.
-            91 => {
-                for (a, b) in [((-2.5, -2.5), (2.5, 2.5)), ((-2.5, 2.5), (2.5, -2.5)), ((-2.5, 0.0), (2.5, 0.0))] {
-                    let at = |(x, z): (f32, f32)| pos + glam::Vec3::new(x * cell, 0.0, z * cell);
-                    self.spike_line(at(a), at(b));
-                }
-            }
+            // Heaven's Drive: rock thrust up over its five cells square (EF_HEAVENDRIVE).
+            91 => self.horns_fx(ro_render::Horns::HeavensDrive, "stone.bmp", pos, 2500.0),
             _ => {}
+        }
+    }
+
+    /// Spikes thrust up out of the ground at `pos` (`ro_render::Shape::Horns`), lasting
+    /// `duration_ms`.
+    fn horns_fx(&mut self, kind: ro_render::Horns, tex: &'static str, pos: glam::Vec3, duration_ms: f32) {
+        self.spark_seed = self.spark_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let shape = ro_render::Shape::Horns { kind, seed: self.spark_seed };
+        self.proc_fx(tex, shape, pos, [1.0; 3], duration_ms);
+    }
+
+    /// What shows while a spell is being cast (as the original's ZC_USESKILL_ACK handling):
+    /// the caster's aura in the spell's element, and the lock-on ring under its target or the
+    /// magic circle where an area spell will fall.
+    pub(crate) fn cast_fx(&mut self, c: &ro_net::Cast) {
+        let ms = c.ms as f32;
+        if let Some(pos) = self.unit_pos(c.src) {
+            let (tex, color, spin, rings) = fx::cast_aura(c.element);
+            for &(top, height, grow, alpha) in rings {
+                let shape = ro_render::Shape::Cylinder { bottom: fx::AURA_BASE, top, height, grow, alpha, spin, owner: c.src };
+                self.proc_fx(tex, shape, pos, color, ms);
+            }
+        }
+        if c.target != 0 && c.target != c.src {
+            if let Some(pos) = self.unit_pos(c.target) {
+                let shape = ro_render::Shape::LockOn { target: c.target, owner: c.src };
+                self.proc_fx("lockon128.tga", shape, pos, [1.0; 3], ms);
+            }
+        } else if c.target == 0 {
+            if let Some(pos) = self.cell_pos(c.cell) {
+                let shape = ro_render::Shape::Rune { size: fx::cast_circle(c.skill), owner: c.src };
+                self.proc_fx("magic_target.tga", shape, pos, [1.0; 3], ms);
+            }
         }
     }
 
