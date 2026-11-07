@@ -1644,7 +1644,7 @@ impl App {
                 // Jupitel Thunder: a ball of lightning hurled at the target.
                 if skill == 84 {
                     if let (Some(from), Some(to)) = (self.unit_pos(act.src), self.unit_pos(target)) {
-                        self.jupitel_fx(from, to);
+                        self.jupitel_fx(from, to, act.hits as u32);
                     }
                 }
                 // Soul Breaker: a ball of energy hurled at the target.
@@ -1711,11 +1711,15 @@ impl App {
                 } else {
                     tracing::debug!(kind = format_args!("{kind:#x}"), "no visual for ground effect");
                 }
+                // Quagmire: its mud on each cell under the bubbles.
+                if let (0x8e, Some(pos)) = (kind, self.cell_pos(cell)) {
+                    self.quagmire_mud(id, pos);
+                }
             }
             GroundEffectGone(id) => {
                 self.stop_fx(id);
                 if let Some(r) = self.renderer.as_mut() {
-                    r.procs.retain(|p| !matches!(p.shape, ro_render::Shape::Horns { kind: ro_render::Horns::IceWall, seed } if seed == id));
+                    r.procs.retain(|p| !matches!(p.shape, ro_render::Shape::Horns { kind: ro_render::Horns::IceWall, seed } | ro_render::Shape::Mud { seed, .. } if seed == id));
                 }
                 self.traps.remove(&id);
                 self.ground_units.remove(&id);

@@ -138,6 +138,16 @@ pub enum Shape {
     /// The magic circle (effect\magic_target.tga) on the ground where an area spell is
     /// being cast, `size` cells across, slowly turning and breathing; `owner` is the caster.
     Rune { size: f32, owner: u32 },
+    /// A camera-facing picture a cell over `pos` (the original's flat "3D" effects), flying
+    /// along `travel` and growing from `size.0` to `size.1` cells over its life, added over
+    /// the scene; `fade` fades it over its last quarter. One frame of a flipbook: drawn only
+    /// while (time / `frame_ms`) mod `frames` is `frame`. It waits while its time is below
+    /// zero, so a run of them can follow one another (Jupitel Thunder's hits).
+    Flip { travel: Vec3, size: (f32, f32), frame: u8, frames: u8, frame_ms: f32, fade: bool },
+    /// One of Quagmire's mud pictures (effect\quagmire_a..c.bmp) on a cell of it, laid on
+    /// the ground and added over it: the three take turns (`phase` 0..3), fading one into the
+    /// next. `seed` turns it; it is the ground unit's id, which takes it away again.
+    Mud { seed: u32, phase: u8 },
 }
 
 /// How a cast aura's cylinder grows over its first second.
@@ -1137,6 +1147,23 @@ impl ProcFx {
                 let angle = (self.time_ms / 4.0).to_radians();
                 ground_square(out, self.pos, size / 2.0, angle, [self.color[0], self.color[1] * gb, self.color[2] * gb, 1.0], ground);
             }
+            Shape::Flip { travel, size, frame, frames, frame_ms, fade } => {
+                if self.time_ms < 0.0 || (self.time_ms / frame_ms.max(1.0)) as u32 % frames.max(1) as u32 != frame as u32 {
+                    return;
+                }
+                let centre = self.pos + travel * t + Vec3::new(0.0, CELL, 0.0);
+                let half = (size.0 + (size.1 - size.0) * t) * CELL * 0.5;
+                let a = if fade { ((1.0 - t) * 4.0).min(1.0) } else { 1.0 };
+                let (right, up) = facing(centre, eye);
+                quad(out, centre, right * half, up * half, [self.color[0], self.color[1], self.color[2], a]);
+            }
+            Shape::Mud { seed, phase } => {
+                // A round of the three every 0.45 s; together they stay about as bright.
+                let turn = (self.time_ms / 450.0 - phase as f32 / 3.0) * std::f32::consts::TAU;
+                let a = 0.6 * turn.cos().max(0.0) * (self.time_ms / 500.0).min(1.0);
+                let angle = (hash(seed) & 0xffff) as f32 / 65535.0 * std::f32::consts::TAU;
+                ground_square(out, self.pos, 0.75, angle, [self.color[0], self.color[1], self.color[2], a], ground);
+            }
             Shape::Rune { size, .. } => {
                 // The original turns it 0.5 / size radians a tick (60 a second), its alpha
                 // breathing with the turn.
@@ -1171,6 +1198,20 @@ mod drape_tests {
         drape(&mut out, [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)], Some(&ground), 0.5);
         assert_eq!(out.len(), 12 * 12 * 6);
         assert!(out.iter().all(|p| (p.pos[1] - ground.at(p.pos[0], p.pos[2]) - 0.5).abs() < 1e-4));
+    }
+
+    #[test]
+    fn a_flipbook_frame_waits_its_turn_and_shows_only_on_its_own_beat() {
+        let flip = |frame, time_ms| ProcFx { tex: TexId(0), shape: Shape::Flip { travel: Vec3::ZERO, size: (1.0, 1.0), frame, frames: 3, frame_ms: 10.0, fade: false }, pos: Vec3::ZERO, color: [1.0; 3], time_ms, duration_ms: 300.0 };
+        let drawn = |p: ProcFx| {
+            let mut out = vec![];
+            p.vertices(Vec3::new(0.0, 50.0, -50.0), None, &mut out);
+            out.len()
+        };
+        // Still waiting (a later hit of Jupitel Thunder).
+        assert_eq!(drawn(flip(0, -5.0)), 0);
+        // 25 ms in is the third beat: frame 2 shows, the others wait for theirs.
+        assert_eq!((drawn(flip(0, 25.0)), drawn(flip(1, 25.0)), drawn(flip(2, 25.0))), (0, 0, 6));
     }
 
     #[test]

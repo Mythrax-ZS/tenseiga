@@ -159,8 +159,42 @@ impl App {
     }
 
     /// Jupitel Thunder: a ball of lightning flying from the caster to its target.
-    pub(crate) fn jupitel_fx(&mut self, from: glam::Vec3, to: glam::Vec3) {
-        self.proc_fx("thunder_ball_a.bmp", ro_render::Shape::Orb { reach: to - from }, from, [0.75, 0.85, 1.0], 500.0);
+    /// As the original draws it: the ball (EF_YUFITEL, effect\thunder_ball_a..f flickering
+    /// over thunder_center's glow) flies from the caster to its target in 0.2 s; then each of
+    /// its `hits` bursts there (EF_YUFITELHIT: a flash of thunder_pang and a flickering blast),
+    /// 0.2 s apart.
+    pub(crate) fn jupitel_fx(&mut self, from: glam::Vec3, to: glam::Vec3, hits: u32) {
+        use ro_render::Shape::Flip;
+        let travel = to - from;
+        const BALL: [&str; 6] = ["thunder_ball_a.bmp", "thunder_ball_b.bmp", "thunder_ball_c.bmp", "thunder_ball_d.bmp", "thunder_ball_e.bmp", "thunder_ball_f.bmp"];
+        self.proc_fx("thunder_center.bmp", Flip { travel, size: (0.9, 0.9), frame: 0, frames: 1, frame_ms: 1.0, fade: false }, from, [0.66; 3], 200.0);
+        for (k, tex) in BALL.into_iter().enumerate() {
+            self.proc_fx(tex, Flip { travel, size: (1.1, 1.1), frame: k as u8, frames: 6, frame_ms: 10.0, fade: false }, from, [1.0; 3], 200.0);
+        }
+        const BLAST: [&str; 5] = ["thunder_plazma_blast_a.bmp", "thunder_plazma_blast_b.bmp", "thunder_ball_d.bmp", "thunder_ball_e.bmp", "thunder_ball_f.bmp"];
+        let (Some(r), Some(vfs)) = (self.renderer.as_mut(), self.vfs.as_deref()) else { return };
+        for i in 0..hits.clamp(1, 20) {
+            let wait = -(200.0 + 200.0 * i as f32);
+            let still = glam::Vec3::ZERO;
+            if let Some(tex) = self.fx.texture(r, vfs, "thunder_pang.bmp") {
+                let shape = Flip { travel: still, size: (0.1, 2.5), frame: 0, frames: 1, frame_ms: 1.0, fade: true };
+                r.procs.push(ro_render::ProcFx { tex, shape, pos: to, color: [1.0; 3], time_ms: wait, duration_ms: 100.0 });
+            }
+            for (k, name) in BLAST.into_iter().enumerate() {
+                if let Some(tex) = self.fx.texture(r, vfs, name) {
+                    let shape = Flip { travel: still, size: (2.0, 2.0), frame: k as u8, frames: 5, frame_ms: 10.0, fade: false };
+                    r.procs.push(ro_render::ProcFx { tex, shape, pos: to, color: [1.0; 3], time_ms: wait, duration_ms: 300.0 });
+                }
+            }
+        }
+    }
+
+    /// A cell of Quagmire (ground unit `id` at `pos`): its mud on the ground, the original's
+    /// three pictures taking turns, until the cell goes.
+    pub(crate) fn quagmire_mud(&mut self, id: u32, pos: glam::Vec3) {
+        for (phase, tex) in ["quagmire_a.bmp", "quagmire_b.bmp", "quagmire_c.bmp"].into_iter().enumerate() {
+            self.proc_fx(tex, ro_render::Shape::Mud { seed: id, phase: phase as u8 }, pos, [1.0; 3], f32::MAX);
+        }
     }
 
     /// Spikes of rock erupting in a wave from `from` toward `to` (Grimtooth, Earth Spike,

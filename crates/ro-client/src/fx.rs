@@ -114,7 +114,9 @@ pub fn skill_visual(skill: u16) -> Option<Visual> {
         14 => Visual::Str("icecrash"),
         15 => Visual::Str("freezing"),
         19 => Visual::Str("firehit1"),
-        20 | 84 => Visual::Str("lightning"),
+        20 => Visual::Str("lightning"),
+        // Jupitel Thunder: drawn in code, its ball and each of its hits (App::jupitel_fx).
+        84 => Visual::Code,
         21 => Visual::Str("thunderstorm"),
         // The original client's own (as roBrowser's effect tables have them): each meteor one
         // of four; Lord of Vermilion's storm of lightning.
@@ -155,6 +157,8 @@ pub fn skill_hit(skill: u16) -> HitVisual {
         91 => HitVisual::OneOf(&["earthhit"]),
         // Storm Gust, Frost Nova: their cold hits are only a sound.
         88 | 89 => HitVisual::Nothing,
+        // Jupitel Thunder draws its own hits as its ball lands (App::jupitel_fx).
+        84 => HitVisual::Nothing,
         _ => HitVisual::Own,
     }
 }
@@ -343,6 +347,8 @@ mod hit_tests {
             assert_eq!(skill_visual(skill), Some(Visual::Code));
             assert!(matches!(skill_hit(skill), HitVisual::OneOf(_)));
         }
+        // Jupitel Thunder draws its ball and its hits itself, never Lightning Bolt's.
+        assert_eq!((skill_visual(84), skill_hit(84)), (Some(Visual::Code), HitVisual::Nothing));
         // Frost Nova: drawn once at the caster; its cold hits are only a sound.
         assert_eq!((skill_visual(88), skill_hit(88)), (Some(Visual::Code), HitVisual::Nothing));
     }
